@@ -104,6 +104,14 @@ supabase functions deploy notify-due-tasks --no-verify-jwt
 
 ---
 
+## Backup
+O plano grátis do Supabase **não faz backup automático**. Por isso o app tem backup próprio:
+- **Equipe → Backup dos dados** (só admin): baixa um arquivo `.json` com projetos, atividades, comentários e a equipe. O app lembra o admin quando passar 7 dias sem backup.
+- **Anotações → ⬇ Backup** (cada pessoa): baixa as próprias anotações, que são privadas.
+- Para restaurar (no mesmo projeto ou num projeto Supabase novo, depois de rodar o `schema.sql`): **Equipe → Restaurar de um arquivo**.
+
+Guarde os arquivos no OneDrive/Google Drive da empresa.
+
 ## Usar no celular como aplicativo
 - **Android (Chrome)**: abra o link → menu ⋮ → **Instalar app** (ou "Adicionar à tela inicial").
 - **iPhone (Safari)**: abra o link → botão **Compartilhar** → **Adicionar à Tela de Início**.

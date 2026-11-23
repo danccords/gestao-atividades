@@ -954,6 +954,7 @@ function viewHome() {
       <div class="t"><h1>${greet}, ${esc(firstName(S.me.name))}!</h1><p>${esc(dateTxt.charAt(0).toUpperCase() + dateTxt.slice(1))}</p></div>
       <div class="actions">${isAdmin() ? `<button class="btn btn-primary" id="new-proj">${ic('plus')} Novo projeto</button>` : ''}</div>
     </div>
+    ${isAdmin() && backupDue() ? `<div class="alert warn">${ic('archive')}<div style="flex:1"><b>Faça um backup dos dados</b>${lastBackupText()}. Leva 2 segundos e protege a equipe caso algo dê errado.</div><button class="btn btn-sm" id="home-backup">Baixar backup</button></div>` : ''}
     <div class="stats">
       <div class="stat" data-go="#/minhas"><div class="k"><i style="background:var(--primary)"></i>Minhas em aberto</div><div class="v">${open.length}</div></div>
       <div class="stat warn" data-go="#/minhas"><div class="k"><i style="background:var(--warn)"></i>Vencendo (${DUE_SOON_DAYS} dias)</div><div class="v">${soon.length}</div></div>
@@ -972,6 +973,7 @@ function viewHome() {
   $$('[data-proj]').forEach((c) => (c.onclick = () => (location.hash = `#/projeto/${c.dataset.proj}`)));
   $$('[data-go]').forEach((c) => (c.onclick = () => (location.hash = c.dataset.go)));
   $('#new-proj')?.addEventListener('click', () => projectModal());
+  $('#home-backup')?.addEventListener('click', async () => { await exportBackup(); viewHome(); });
   $('#new-proj-2')?.addEventListener('click', () => projectModal());
   $('#show-arch')?.addEventListener('change', (e) => { S.ui.showArchived = e.target.checked; viewHome(); });
 }
@@ -1441,9 +1443,11 @@ function viewTeam() {
           <div class="td c-del">${adm && !self ? `<button class="btn btn-ghost btn-sm" data-invite title="Copiar convite">Convite</button><button class="btn btn-ghost btn-icon btn-sm" data-delm title="Remover">${ic('trash')}</button>` : ''}</div>
         </div>`;
       }).join('')}
-    </div>`;
+    </div>
+    ${adm ? backupCardHtml() : ''}`;
 
   if (!adm) return;
+  bindBackupCard();
   const f = $('#add-m');
   f.onsubmit = async (e) => {
     e.preventDefault();
@@ -1557,6 +1561,11 @@ async function viewNotes(noteId) {
           <div class="lock">${ic('lock')} Somente você vê suas anotações</div>
           <div class="search" style="position:relative">${ic('search').replace('<svg', '<svg style="position:absolute;left:10px;top:10px;width:16px;height:16px;color:var(--text-3)"')}<input class="input" id="n-q" placeholder="Buscar nas anotações..." style="padding-left:32px" /></div>
           <button class="btn btn-primary btn-block" id="n-new">${ic('plus')} Nova página</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" id="n-exp" style="flex:1" title="Baixar todas as suas anotações">⬇ Backup</button>
+            <button class="btn btn-sm" id="n-imp" style="flex:1" title="Restaurar anotações de um arquivo">⬆ Restaurar</button>
+            <input type="file" id="n-file" accept=".json,application/json" hidden />
+          </div>
         </div>
         <div class="notes-items" id="n-items"></div>
       </div>
@@ -1582,6 +1591,9 @@ async function viewNotes(noteId) {
   };
   renderList();
   $('#n-q').oninput = renderList;
+  $('#n-exp').onclick = exportNotes;
+  $('#n-imp').onclick = () => $('#n-file').click();
+  $('#n-file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importNotes(f); };
   $('#n-new').onclick = async () => {
     try {
       const row = await q(sb.from('notes').insert({ title: '', content: '', icon: '📄' }).select().single());
@@ -1840,6 +1852,122 @@ function mountEditor(note, renderList) {
     const a = e.target.closest('a');
     if (a && (e.ctrlKey || e.metaKey)) window.open(a.href, '_blank', 'noopener');
   });
+}
+
+
+// ---------------------------------------------------------------------
+// BACKUP (o plano grátis do Supabase não tem backup automático)
+// ---------------------------------------------------------------------
+const BACKUP_KEY = 'ga-last-backup';
+function lastBackupAt() { try { return localStorage.getItem(BACKUP_KEY); } catch { return null; } }
+function backupDue() {
+  const t = lastBackupAt();
+  return !t || Date.now() - new Date(t).getTime() > 7 * 86400000;
+}
+function lastBackupText() {
+  const t = lastBackupAt();
+  return t ? `Último backup neste aparelho: ${new Date(t).toLocaleDateString('pt-BR')} (${relTime(t)})` : 'Nenhum backup feito neste aparelho ainda';
+}
+function downloadJson(obj, name) {
+  const blob = new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+async function fetchAll(table) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const rows = await q(sb.from(table).select('*').order('created_at').range(from, from + 999));
+    out.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  return out;
+}
+async function exportBackup() {
+  try {
+    const [team_members, projects, tasks, task_comments] = await Promise.all(
+      ['team_members', 'projects', 'tasks', 'task_comments'].map(fetchAll));
+    const data = { app: 'gestao-atividades', tipo: 'equipe', versao: 1, criado_em: new Date().toISOString(), criado_por: S.me.email, data: { team_members, projects, tasks, task_comments } };
+    downloadJson(data, `backup-atividades-${todayStr()}.json`);
+    localStorage.setItem(BACKUP_KEY, new Date().toISOString());
+    toast(`Backup baixado: ${projects.length} projetos, ${tasks.length} atividades`, 'ok');
+  } catch (e) { toastErr(e); }
+}
+async function upsertChunks(table, rows, opts) {
+  for (let i = 0; i < rows.length; i += 500) {
+    await q(sb.from(table).upsert(rows.slice(i, i + 500), opts));
+  }
+}
+async function importBackup(file) {
+  let b;
+  try { b = JSON.parse(await file.text()); } catch { toast('Arquivo inválido.', 'error'); return; }
+  if (b?.app !== 'gestao-atividades' || b?.tipo !== 'equipe') { toast('Esse arquivo não é um backup da equipe deste app.', 'error'); return; }
+  const d = b.data;
+  const ok = await confirmDialog(`Restaurar o backup de <b>${new Date(b.criado_em).toLocaleString('pt-BR')}</b>?<br/><br/>
+    ${d.projects.length} projetos · ${d.tasks.length} atividades · ${d.team_members.length} pessoas · ${d.task_comments.length} comentários.<br/><br/>
+    <span class="muted small">O que já existe com o mesmo código é sobrescrito pela versão do backup. Nada é apagado.</span>`, { okText: 'Restaurar', title: 'Restaurar backup' });
+  if (!ok) return;
+  toast('Restaurando...');
+  try {
+    // pessoas: pelo e-mail (o id pode ser diferente num projeto novo)
+    const mem = d.team_members.map(({ email, name, role, active }) => ({ email, name, role, active }));
+    await upsertChunks('team_members', mem, { onConflict: 'email' });
+    const current = await fetchAll('team_members');
+    const byEmail = Object.fromEntries(current.map((m) => [m.email, m.id]));
+    const idMap = Object.fromEntries(d.team_members.map((m) => [m.id, byEmail[m.email] || null]));
+    await upsertChunks('projects', d.projects.map(({ id, name, description, color, archived, created_at }) => ({ id, name, description, color, archived, created_at })), { onConflict: 'id' });
+    await upsertChunks('tasks', d.tasks.map(({ id, project_id, title, description, assignee_id, due_date, status, progress, priority, created_at }) =>
+      ({ id, project_id, title, description, assignee_id: assignee_id ? idMap[assignee_id] ?? null : null, due_date, status, progress, priority, created_at })), { onConflict: 'id' });
+    await upsertChunks('task_comments', d.task_comments.map(({ id, task_id, author_email, body, created_at }) => ({ id, task_id, author_email, body, created_at })), { onConflict: 'id' });
+    await loadAll();
+    refresh();
+    toast('Backup restaurado!', 'ok');
+  } catch (e) { toastErr(e); }
+}
+function backupCardHtml() {
+  return `<div class="card" style="margin-top:18px">
+    <h3>${ic('archive').replace('<svg', '<svg style="vertical-align:-3px;margin-right:6px"')}Backup dos dados</h3>
+    <p class="small muted" style="margin:0 0 12px;line-height:1.55">Baixa um arquivo com todos os projetos, atividades, comentários e a lista da equipe.
+      Guarde no OneDrive/Google Drive da empresa. Se algum dia for preciso trocar de servidor, é só restaurar esse arquivo.
+      <br/>As <b>anotações pessoais</b> não entram aqui (são privadas): cada pessoa baixa as suas na aba Anotações.
+      <br/><b>${esc(lastBackupText())}.</b></p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" id="bk-exp">⬇ Baixar backup agora</button>
+      <button class="btn" id="bk-imp">⬆ Restaurar de um arquivo</button>
+      <input type="file" id="bk-file" accept=".json,application/json" hidden />
+    </div>
+  </div>`;
+}
+function bindBackupCard() {
+  $('#bk-exp').onclick = async () => { await exportBackup(); viewTeam(); };
+  $('#bk-imp').onclick = () => $('#bk-file').click();
+  $('#bk-file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importBackup(f); };
+}
+async function exportNotes() {
+  try {
+    const notes = await fetchAll('notes');
+    downloadJson({ app: 'gestao-atividades', tipo: 'anotacoes', versao: 1, criado_em: new Date().toISOString(), dono: S.me.email, notes },
+      `minhas-anotacoes-${todayStr()}.json`);
+    toast(`${notes.length} anotações salvas no arquivo`, 'ok');
+  } catch (e) { toastErr(e); }
+}
+async function importNotes(file) {
+  let b;
+  try { b = JSON.parse(await file.text()); } catch { toast('Arquivo inválido.', 'error'); return; }
+  if (b?.app !== 'gestao-atividades' || b?.tipo !== 'anotacoes') { toast('Esse arquivo não é um backup de anotações.', 'error'); return; }
+  const existing = new Set((S.notes || []).map((n) => n.id));
+  const novos = b.notes.filter((n) => !existing.has(n.id));
+  const ok = await confirmDialog(`Restaurar <b>${novos.length}</b> anotações do arquivo? (${b.notes.length - novos.length} já existem e serão mantidas como estão.)`, { okText: 'Restaurar', title: 'Restaurar anotações' });
+  if (!ok || !novos.length) return;
+  try {
+    const rows = novos.map(({ title, icon, content, pinned, created_at, updated_at }) => ({ title, icon, content, pinned, created_at, updated_at }));
+    for (let i = 0; i < rows.length; i += 200) await q(sb.from('notes').insert(rows.slice(i, i + 200)));
+    await loadNotes();
+    viewNotes(currentRoute().id);
+    toast('Anotações restauradas!', 'ok');
+  } catch (e) { toastErr(e); }
 }
 
 // ---------------------------------------------------------------------

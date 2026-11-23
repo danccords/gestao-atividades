@@ -172,7 +172,9 @@ create policy "tar_editar"  on public.tasks for update using (
 -- Comentários: todos da equipe leem e escrevem; cada um apaga o seu (admin apaga qualquer)
 create policy "com_ver"     on public.task_comments for select using (public.is_member());
 create policy "com_inserir" on public.task_comments for insert
-  with check (public.is_member() and author_email = public.current_email());
+  with check (public.is_admin() or (public.is_member() and author_email = public.current_email()));
+create policy "com_editar" on public.task_comments for update
+  using (public.is_admin());
 create policy "com_apagar"  on public.task_comments for delete
   using (author_email = public.current_email() or public.is_admin());
 
