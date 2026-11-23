@@ -4,8 +4,17 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, APP_NAME, COMPANY_NAME, DUE_SOON_DAYS } from './config.js';
 
+// "Manter conectado": guarda o login no aparelho (localStorage) até a pessoa clicar em Sair.
+// Desmarcado: o login vale só enquanto o navegador estiver aberto (sessionStorage).
+const REMEMBER_KEY = 'ga-remember';
+const remember = () => { try { return localStorage.getItem(REMEMBER_KEY) !== '0'; } catch { return true; } };
+const authStorage = {
+  getItem: (k) => { try { return (remember() ? localStorage : sessionStorage).getItem(k); } catch { return null; } },
+  setItem: (k, v) => { try { (remember() ? localStorage : sessionStorage).setItem(k, v); } catch { /* ignore */ } },
+  removeItem: (k) => { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch { /* ignore */ } },
+};
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: authStorage },
 });
 
 // ---------------------------------------------------------------------
@@ -334,6 +343,8 @@ function renderAuth(mode = 'login', notice = '') {
     form = `
       <div class="field"><label>E-mail</label><input class="input" type="email" name="email" autocomplete="email" required /></div>
       <div class="field"><label>Senha</label><input class="input" type="password" name="password" autocomplete="current-password" required /></div>
+      <label style="display:flex;align-items:center;gap:8px;margin:-4px 0 12px;cursor:pointer;font-size:13.5px;color:var(--text-2)">
+        <input type="checkbox" name="remember" ${remember() ? 'checked' : ''} style="width:17px;height:17px;accent-color:var(--primary)" /> Manter conectado neste aparelho</label>
       <div class="err" id="auth-err"></div>
       <button class="btn btn-primary btn-block" type="submit">Entrar</button>`;
   } else if (mode === 'first') {
@@ -372,6 +383,7 @@ function renderAuth(mode = 'login', notice = '') {
     btn.disabled = true;
     try {
       if (mode === 'login') {
+        try { localStorage.setItem(REMEMBER_KEY, f.remember.checked ? '1' : '0'); } catch { /* ignore */ }
         await q(sb.auth.signInWithPassword({ email, password: f.password.value }));
       } else if (mode === 'first') {
         if (f.password.value.length < 6) throw new Error('A senha precisa ter pelo menos 6 caracteres.');
