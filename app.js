@@ -183,11 +183,36 @@ function avatar(m, cls = '') {
   if (!m) return `<span class="avatar avatar-empty ${cls}" title="Sem responsável">${ic('user')}</span>`;
   return `<span class="avatar ${cls}" style="background:${hashColor(m.email)}" title="${esc(m.name)}">${esc(initials(m.name))}</span>`;
 }
+// Aprovação: atividades criadas por colaboradores ficam "pendente" até um admin aprovar
+const approvalOf = (t) => t.approval || 'aprovada';
+const isApproved = (t) => approvalOf(t) === 'aprovada';
+// Quem gerencia a atividade (nome, descrição, prazo, prioridade, responsável):
+//  aprovada: o admin que criou/aprovou; se ele não for mais admin ativo, qualquer admin
+//  pendente/recusada: quem pediu (só nome/descrição) e os admins
+function isTaskManager(t) {
+  if (!S.me) return false;
+  if (!t.id) return true;
+  if (!isApproved(t)) return isAdmin() || t.created_by_email === S.me.email;
+  if (t.created_by_email === S.me.email && isAdmin()) return true;
+  return isAdmin() && !S.members.some((m) => m.email === t.created_by_email && m.role === 'admin' && m.active);
+}
+// Prazo, prioridade, responsável e projeto
+function canPlanTask(t) {
+  return isApproved(t) ? isTaskManager(t) : isAdmin();
+}
+// Status, progresso e atualizações: quem passou e quem recebeu
 function canEditTask(t) {
-  return isAdmin() || (S.me && t.assignee_id === S.me.id);
+  return isTaskManager(t) || (!!S.me && t.assignee_id === S.me.id);
+}
+function activeProject(t) {
+  const p = project(t.project_id);
+  return p && !p.archived;
+}
+function pendingRequests() {
+  return S.tasks.filter((t) => approvalOf(t) === 'pendente' && activeProject(t)).sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 function myTasks() {
-  return S.tasks.filter((t) => t.assignee_id === S.me?.id && project(t.project_id) && !project(t.project_id).archived);
+  return S.tasks.filter((t) => isApproved(t) && t.assignee_id === S.me?.id && activeProject(t));
 }
 function alertsFor(list) {
   const late = list.filter((t) => dueState(t) === 'late');
@@ -589,7 +614,7 @@ function renderShell() {
         <a href="#/inicio" data-nav="inicio">${ic('home')} Projetos</a>
         <a href="#/minhas" data-nav="minhas">${ic('check')} Minhas atividades <span class="count" id="nav-count" hidden></span></a>
         <a href="#/notas" data-nav="notas">${ic('note')} Anotações</a>
-        <a href="#/equipe" data-nav="equipe">${ic('users')} Equipe</a>
+        ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')} Equipe</a>` : ''}
       </nav>
       <div class="nav-section">Projetos</div>
       <div class="nav-projects" id="nav-projects"></div>
@@ -612,7 +637,7 @@ function renderShell() {
       <a href="#/inicio" data-nav="inicio">${ic('home')}<span>Projetos</span></a>
       <a href="#/minhas" data-nav="minhas">${ic('check')}<span>Minhas</span><span class="count" id="bn-count" hidden></span></a>
       <a href="#/notas" data-nav="notas">${ic('note')}<span>Anotações</span></a>
-      <a href="#/equipe" data-nav="equipe">${ic('users')}<span>Equipe</span></a>
+      ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')}<span>Equipe</span></a>` : ''}
     </nav>
   </div>`;
   $('#logout').onclick = logout;
@@ -630,7 +655,7 @@ async function logout() {
 
 function updateChrome() {
   const { late, soon } = alertsFor(myTasks());
-  const n = late.length + soon.length;
+  const n = late.length + soon.length + (isAdmin() ? pendingRequests().length : 0);
   const badge = $('#bell-badge');
   if (badge) { badge.hidden = n === 0; badge.textContent = n > 99 ? '99+' : n; }
   for (const id of ['#nav-count', '#bn-count']) {
@@ -658,11 +683,17 @@ function openBell(anchor) {
   if (S.pop) { closePopover(); return; }
   const { late, soon } = alertsFor(myTasks());
   const items = [...late, ...soon].sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
+  const reqs = isAdmin() ? pendingRequests() : [];
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const html = `
     <div class="ttl">Avisos de prazo</div>
     <div class="notif-list">
-      ${items.length ? items.map((t) => `
+      ${reqs.map((t) => `
+        <div class="notif" data-task="${t.id}">
+          <span class="dot" style="background:var(--primary)"></span>
+          <div><b>Aprovar: ${esc(t.title)}</b><span>${esc(memberByEmail(t.requested_by_email)?.name || '')} · ${esc(project(t.project_id)?.name || '')}</span></div>
+        </div>`).join('')}
+      ${items.length || reqs.length ? items.map((t) => `
         <div class="notif" data-task="${t.id}">
           <span class="dot" style="background:${dueState(t) === 'late' ? 'var(--danger)' : 'var(--warn)'}"></span>
           <div><b>${esc(t.title)}</b><span>${esc(project(t.project_id)?.name || '')} · ${esc(dueText(t))}</span></div>
@@ -743,7 +774,7 @@ function renderView(r, isRefresh) {
     case 'projeto': return viewProject(r.id, isRefresh);
     case 'minhas': return viewMine();
     case 'notas': return viewNotes(r.id);
-    case 'equipe': return viewTeam();
+    case 'equipe': if (!isAdmin()) { location.hash = '#/inicio'; return; } return viewTeam();
     default: return viewHome();
   }
 }
@@ -760,6 +791,8 @@ function prioPill(t, editable) {
   return `<button class="pill sm ${editable ? 'editable' : ''}" ${editable ? 'data-act="prio" data-pop-anchor' : 'tabindex="-1"'} style="background:${p.color}">${p.label}</button>`;
 }
 function dueChip(t, editable) {
+  if (approvalOf(t) === 'pendente') return `<span class="due soon" title="Aguardando aprovação">${ic('clock')}Aguardando aprovação</span>`;
+  if (approvalOf(t) === 'recusada') return `<span class="due late">${ic('x')}Recusada</span>`;
   const st = dueState(t);
   return `<span class="due ${st}" ${editable ? 'data-act="due" data-pop-anchor style="cursor:pointer"' : ''} title="${t.due_date ? fmtDate(t.due_date, true) : ''}">${ic('calendar')}${esc(dueText(t))}</span>`;
 }
@@ -770,12 +803,12 @@ function progBar(t, editable) {
 function whoCell(t) {
   const m = member(t.assignee_id);
   const inner = `<div class="person">${avatar(m)}<span>${m ? esc(m.name) : '<span class="muted">—</span>'}</span></div>`;
-  return isAdmin() ? `<div data-act="who" data-pop-anchor style="cursor:pointer;min-width:0;width:100%">${inner}</div>` : inner;
+  return canPlanTask(t) ? `<div data-act="who" data-pop-anchor style="cursor:pointer;min-width:0;width:100%">${inner}</div>` : inner;
 }
 
 function taskRow(t, { color, showProject }) {
   const ed = canEditTask(t);
-  const adm = isAdmin();
+  const adm = canPlanTask(t);
   const p = project(t.project_id);
   const cc = S.commentCounts[t.id] || 0;
   return `
@@ -938,7 +971,8 @@ function viewHome() {
   const dateTxt = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
 
   const card = (p) => {
-    const ts = S.tasks.filter((t) => t.project_id === p.id);
+    const ts = S.tasks.filter((t) => t.project_id === p.id && isApproved(t));
+    const pendN = S.tasks.filter((t) => t.project_id === p.id && approvalOf(t) === 'pendente').length;
     const total = ts.length;
     const avg = total ? Math.round(ts.reduce((s, t) => s + t.progress, 0) / total) : 0;
     const pl = ts.filter((t) => dueState(t) === 'late').length;
@@ -958,6 +992,7 @@ function viewHome() {
           <span>${avg}% concluído</span>
           ${pl ? `<span class="late">${pl} atrasada${pl > 1 ? 's' : ''}</span>` : ''}
           ${ps ? `<span class="soon">${ps} vencendo</span>` : ''}
+          ${pendN && isAdmin() ? `<span class="soon">${pendN} para aprovar</span>` : ''}
           <span style="margin-left:auto;display:flex">${people.slice(0, 4).map((m, i) => `<span style="margin-left:${i ? -8 : 0}px;border:2px solid #fff;border-radius:50%;display:inline-flex">${avatar(m)}</span>`).join('')}</span>
         </div>
       </div>`;
@@ -969,6 +1004,11 @@ function viewHome() {
       <div class="actions">${isAdmin() ? `<button class="btn btn-primary" id="new-proj">${ic('plus')} Novo projeto</button>` : ''}</div>
     </div>
     ${isAdmin() && backupDue() ? `<div class="alert warn">${ic('archive')}<div style="flex:1"><b>Faça um backup dos dados</b>${lastBackupText()}. Leva 2 segundos e protege a equipe caso algo dê errado.</div><button class="btn btn-sm" id="home-backup">Baixar backup</button></div>` : ''}
+    ${isAdmin() && pendingRequests().length ? `<div class="alert warn" style="display:block">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">${ic('clock')}<b>${pendingRequests().length} solicitaç${pendingRequests().length > 1 ? 'ões' : 'ão'} de atividade aguardando aprovação</b></div>
+      ${pendingRequests().slice(0, 6).map((t) => `<div class="notif" data-req="${t.id}" style="padding:7px 8px;background:rgba(255,255,255,.6);margin-top:4px">
+        <span class="dot" style="background:var(--warn)"></span><div><b>${esc(t.title)}</b><span>${esc(memberByEmail(t.requested_by_email)?.name || t.requested_by_email || '')} · ${esc(project(t.project_id)?.name || '')} · ${relTime(t.created_at)}</span></div></div>`).join('')}
+    </div>` : ''}
     <div class="stats">
       <div class="stat" data-go="#/minhas"><div class="k"><i style="background:var(--primary)"></i>Minhas em aberto</div><div class="v">${open.length}</div></div>
       <div class="stat warn" data-go="#/minhas"><div class="k"><i style="background:var(--warn)"></i>Vencendo (${DUE_SOON_DAYS} dias)</div><div class="v">${soon.length}</div></div>
@@ -984,6 +1024,7 @@ function viewHome() {
       ${isAdmin() ? `<div class="pcard add" id="new-proj-2">${ic('plus', '').replace('<svg', '<svg width="22" height="22"')} Novo projeto</div>` : ''}
     </div>` : `<div class="empty"><b>Nenhum projeto ainda</b>Quando o gestor criar um projeto, ele aparece aqui.</div>`}`;
 
+  $$('[data-req]').forEach((c) => (c.onclick = () => openTask(c.dataset.req)));
   $$('[data-proj]').forEach((c) => (c.onclick = () => (location.hash = `#/projeto/${c.dataset.proj}`)));
   $$('[data-go]').forEach((c) => (c.onclick = () => (location.hash = c.dataset.go)));
   $('#new-proj')?.addEventListener('click', () => projectModal());
@@ -1053,8 +1094,17 @@ function viewProject(id, isRefresh) {
   const mode = S.prefs.projView || 'table';
   const groupBy = S.prefs.groupBy || 'status';
 
-  let ts = S.tasks.filter((t) => t.project_id === id);
+  const allTs = S.tasks.filter((t) => t.project_id === id);
+  let ts = allTs.filter(isApproved);
   const total = ts.length;
+  const textMatch = (t) => !ui.q || t.title.toLowerCase().includes(ui.q.toLowerCase()) || (t.description || '').toLowerCase().includes(ui.q.toLowerCase());
+  const pendingTs = allTs.filter((t) => approvalOf(t) === 'pendente' && textMatch(t)).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const refusedTs = allTs.filter((t) => approvalOf(t) === 'recusada' && textMatch(t));
+  const reqGroups = [
+    { key: '_pend', label: isAdmin() ? 'Solicitações aguardando sua aprovação' : 'Suas solicitações aguardando aprovação', color: '#f59e0b', tasks: pendingTs },
+    { key: '_rec', label: 'Solicitações recusadas', color: '#e2445c', tasks: refusedTs, collapsed: true },
+  ].filter((g) => g.tasks.length);
+  const canRequest = !p.archived;
   if (ui.q) { const qq = ui.q.toLowerCase(); ts = ts.filter((t) => t.title.toLowerCase().includes(qq) || (t.description || '').toLowerCase().includes(qq)); }
   if (ui.who === '_none') ts = ts.filter((t) => !t.assignee_id);
   else if (ui.who === '_me') ts = ts.filter((t) => t.assignee_id === S.me.id);
@@ -1063,14 +1113,14 @@ function viewProject(id, isRefresh) {
   else if (ui.st) ts = ts.filter((t) => t.status === ui.st);
   ts.sort(sortByDue);
 
-  const avg = total ? Math.round(S.tasks.filter((t) => t.project_id === id).reduce((s, t) => s + t.progress, 0) / total) : 0;
+  const avg = total ? Math.round(allTs.filter(isApproved).reduce((s, t) => s + t.progress, 0) / total) : 0;
 
   let body = '';
-  if (!total) {
-    body = `<div class="empty"><b>Nenhuma atividade neste projeto</b>${isAdmin() ? 'Crie a primeira atividade e defina o responsável e o prazo.' : 'O gestor ainda não cadastrou atividades.'}
-      ${isAdmin() ? `<br/><button class="btn btn-primary" id="first-task">${ic('plus')} Nova atividade</button>` : ''}</div>`;
+  if (!total && !reqGroups.length) {
+    body = `<div class="empty"><b>Nenhuma atividade neste projeto</b>${isAdmin() ? 'Crie a primeira atividade e defina o responsável e o prazo.' : 'Você pode solicitar uma atividade: o administrador aprova e define o prazo.'}
+      ${canRequest ? `<br/><button class="btn btn-primary" id="first-task">${ic('plus')} ${isAdmin() ? 'Nova atividade' : 'Solicitar atividade'}</button>` : ''}</div>`;
   } else if (mode === 'kanban') {
-    body = `<div class="kanban">${STATUS_ORDER.map((k) => {
+    body = (reqGroups.length ? renderGroups(reqGroups, { scope: id }) : '') + `<div class="kanban">${STATUS_ORDER.map((k) => {
       const list = ts.filter((t) => t.status === k);
       return `<div class="kcol" data-col="${k}">
         <div class="kcol-head"><i style="background:${STATUS[k].color}"></i>${STATUS[k].label}<span class="n">${list.length}</span></div>
@@ -1097,7 +1147,8 @@ function viewProject(id, isRefresh) {
       groups = STATUS_ORDER.map((k) => ({ key: k, label: STATUS[k].label, color: STATUS[k].color, tasks: ts.filter((t) => t.status === k), defaults: { status: k }, collapsed: k === 'concluido' }))
         .filter((g) => g.tasks.length || (g.key === 'nao_iniciado' && !ui.q && !ui.who && !ui.st));
     }
-    body = groups.length ? renderGroups(groups, { allowAdd: true, scope: id }) : `<div class="empty"><b>Nada encontrado</b>Nenhuma atividade corresponde aos filtros.</div>`;
+    body = (reqGroups.length ? renderGroups(reqGroups, { scope: id }) : '')
+      + (groups.length ? renderGroups(groups, { allowAdd: true, scope: id }) : (total ? `<div class="empty"><b>Nada encontrado</b>Nenhuma atividade corresponde aos filtros.</div>` : ''));
   }
 
   const memberOpts = S.members.filter((m) => m.active).map((m) => `<option value="${m.id}" ${ui.who === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
@@ -1114,10 +1165,10 @@ function viewProject(id, isRefresh) {
       ${isAdmin() ? `<div class="actions">
         <button class="btn" id="edit-proj">${ic('edit')} Editar</button>
         <button class="btn btn-icon" id="more-proj" data-pop-anchor title="Mais">${ic('more')}</button>
-        <button class="btn btn-primary" id="new-task">${ic('plus')} Nova atividade</button>
-      </div>` : ''}
+        ${canRequest ? `<button class="btn btn-primary" id="new-task">${ic('plus')} Nova atividade</button>` : ''}
+      </div>` : (canRequest && (total || reqGroups.length) ? `<div class="actions"><button class="btn btn-primary" id="new-task">${ic('plus')} Solicitar atividade</button></div>` : '')}
     </div>
-    ${total ? `<div class="toolbar">
+    ${total || reqGroups.length ? `<div class="toolbar">
       <div class="search">${ic('search')}<input class="input" id="f-q" placeholder="Buscar atividade..." value="${esc(ui.q)}" /></div>
       <select class="select" id="f-who">
         <option value="">Todos os responsáveis</option>
@@ -1213,56 +1264,84 @@ function bindKanban() {
 async function openTask(id, defaults = {}) {
   const isNew = !id;
   const t = isNew
-    ? { title: '', description: '', assignee_id: null, due_date: null, status: 'nao_iniciado', progress: 0, priority: 'media', ...defaults }
+    ? { title: '', description: '', assignee_id: null, due_date: null, status: 'nao_iniciado', progress: 0, priority: 'media', approval: isAdmin() ? 'aprovada' : 'pendente', ...defaults }
     : task(id);
   if (!t) { toast('Atividade não encontrada'); return; }
   const adm = isAdmin();
-  const canEd = isNew ? adm : canEditTask(t);
+  const approval = approvalOf(t);
+  const pending = approval !== 'aprovada';
+  const isRequest = isNew && !adm;                         // colaborador criando uma solicitação
+  const canText = isNew || isTaskManager(t);                // nome e descrição
+  const canPlan = isNew ? adm : canPlanTask(t);             // prazo, prioridade, responsável, projeto
+  const canEd = isNew || canEditTask(t);                    // status, progresso, atualizações
+  const canReview = !isNew && pending && adm;               // aprovar / recusar
+  const canDelete = !isNew && isTaskManager(t);
+  const creator = memberByEmail(t.created_by_email);
+  const creatorName = creator ? creator.name : (t.created_by_email || 'administrador');
+  const requester = memberByEmail(t.requested_by_email);
+  const assignee = member(t.assignee_id);
   const p = project(t.project_id);
-  const dis = adm ? '' : 'disabled';
-  const disSP = canEd ? '' : 'disabled';
   const memberOpts = S.members.filter((m) => m.active || m.id === t.assignee_id)
     .map((m) => `<option value="${m.id}" ${m.id === t.assignee_id ? 'selected' : ''}>${esc(m.name)}${m.job_title ? ' — ' + esc(m.job_title) : ''}</option>`).join('');
   const projOpts = S.projects.filter((x) => !x.archived || x.id === t.project_id)
     .map((x) => `<option value="${x.id}" ${x.id === t.project_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const D = (ok) => (ok ? '' : 'disabled');
+  const lockIc = ic('lock').replace('<svg', '<svg width="13" height="13" style="vertical-align:-2px"');
+
+  let note = '';
+  if (isRequest) {
+    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Descreva a atividade. Um administrador aprova e define o prazo de entrega e a prioridade.</div></div>`;
+  } else if (!isNew && approval === 'pendente') {
+    note = adm
+      ? `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Solicitação de ${esc(requester?.name || t.requested_by_email || '')}</b>Enviada ${relTime(t.created_at)}. Defina a <b>data de entrega</b> e a <b>prioridade</b> e clique em Aprovar.</div></div>`
+      : `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Aguardando aprovação</b>Um administrador vai aprovar e definir o prazo e a prioridade. Enquanto isso você pode ajustar o nome e a descrição.</div></div>`;
+  } else if (!isNew && approval === 'recusada') {
+    note = `<div class="alert danger" style="margin-bottom:14px">${ic('alert')}<div><b>Solicitação recusada</b>${t.review_note ? esc(t.review_note) : 'Sem motivo informado.'}</div></div>`;
+  } else if (!isNew && !isTaskManager(t) && canEd) {
+    note = `<div class="readonly-note">Atividade passada por <b>${esc(creatorName)}</b>. Você é o responsável: atualize o <b>status</b>, o <b>progresso</b> e escreva as atualizações. Prazo e prioridade são definidos por ${esc(firstName(creatorName))}.</div>`;
+  } else if (!isNew && !canEd) {
+    note = `<div class="readonly-note">${lockIc} Atividade passada por <b>${esc(creatorName)}</b>${assignee ? ` para <b>${esc(assignee.name)}</b>` : ''}. Somente ${assignee ? 'os dois podem' : 'quem passou pode'} alterar ou comentar.</div>`;
+  }
 
   const body = `
     <div class="drawer-head">
-      <div class="crumb"><span style="width:9px;height:9px;border-radius:3px;background:${esc(p?.color || '#999')}"></span>${esc(p?.name || '')}${isNew ? ' · Nova atividade' : ''}</div>
-      ${!isNew && adm ? `<button class="btn btn-ghost btn-icon" id="t-del" title="Excluir">${ic('trash')}</button>` : ''}
+      <div class="crumb"><span style="width:9px;height:9px;border-radius:3px;background:${esc(p?.color || '#999')}"></span>${esc(p?.name || '')}${isNew ? (isRequest ? ' · Solicitar atividade' : ' · Nova atividade') : ''}</div>
+      ${canDelete ? `<button class="btn btn-ghost btn-icon" id="t-del" title="${pending && !adm ? 'Cancelar solicitação' : 'Excluir'}">${ic('trash')}</button>` : ''}
       <button class="btn btn-ghost btn-icon" data-close title="Fechar">${ic('x')}</button>
     </div>
     <div class="drawer-body">
-      <input class="title-input" id="t-title" placeholder="Nome da atividade" value="${esc(t.title)}" ${dis} />
-      ${!adm && canEd ? `<div class="readonly-note">Você é o responsável: pode atualizar o <b>status</b> e o <b>progresso</b> e comentar.</div>` : ''}
-      ${!adm && !canEd ? `<div class="readonly-note">Somente o responsável e o gestor podem alterar esta atividade. Você pode comentar.</div>` : ''}
-      <div class="kv">
+      <input class="title-input" id="t-title" placeholder="${isRequest ? 'O que você vai fazer?' : 'Nome da atividade'}" value="${esc(t.title)}" ${D(canText)} />
+      ${note}
+      ${isRequest ? '' : `<div class="kv">
         <label>Status</label>
-        <select class="select" id="t-status" ${disSP}>${STATUS_ORDER.map((k) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>
+        <select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>
         <label>Progresso</label>
-        <div class="range-row"><input type="range" id="t-prog" min="0" max="100" step="5" value="${t.progress}" ${disSP} /><b id="t-progv">${t.progress}%</b></div>
+        <div class="range-row"><input type="range" id="t-prog" min="0" max="100" step="5" value="${t.progress}" ${D(canEd)} /><b id="t-progv">${t.progress}%</b></div>
         <label>Responsável</label>
-        <select class="select" id="t-who" ${dis}><option value="">— Sem responsável —</option>${memberOpts}</select>
-        <label>Data de entrega</label>
-        <input class="input" type="date" id="t-due" value="${t.due_date || ''}" ${dis} />
+        <select class="select" id="t-who" ${D(canPlan)}><option value="">— Sem responsável —</option>${memberOpts}</select>
+        <label>Data de entrega${canReview ? ' *' : ''}</label>
+        <input class="input" type="date" id="t-due" value="${t.due_date || ''}" ${D(canPlan)} />
         <label>Prioridade</label>
-        <select class="select" id="t-prio" ${dis}>${Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${t.priority === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
-        ${adm ? `<label>Projeto</label><select class="select" id="t-proj">${projOpts}</select>` : ''}
-      </div>
+        <select class="select" id="t-prio" ${D(canPlan)}>${Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${t.priority === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
+        ${canPlan ? `<label>Projeto</label><select class="select" id="t-proj">${projOpts}</select>` : ''}
+        ${!isNew && !pending ? `<label>Passada por</label><div class="person">${avatar(creator || { name: creatorName, email: t.created_by_email || '' })}<span>${esc(creatorName)}${requester ? ` <span class="muted small">(pedida por ${esc(firstName(requester.name))})</span>` : ''}</span></div>` : ''}
+      </div>`}
       <div class="field"><label>Descrição / escopo</label>
-        <textarea class="textarea" id="t-desc" rows="5" placeholder="${adm ? 'Detalhes, normas, documentos de referência...' : ''}" ${dis}>${esc(t.description || '')}</textarea></div>
+        <textarea class="textarea" id="t-desc" rows="5" placeholder="${canText ? 'Detalhes, normas, documentos de referência...' : ''}" ${D(canText)}>${esc(t.description || '')}</textarea></div>
       ${isNew ? '' : `
         <div class="section-t">${ic('msg').replace('<svg', '<svg width="16" height="16"')} Atualizações e comentários</div>
-        <div class="comment-form">
+        ${canEd ? `<div class="comment-form">
           <textarea class="textarea" id="c-body" placeholder="Escreva uma atualização... (Ctrl+Enter envia)"></textarea>
           <button class="btn btn-primary btn-icon" id="c-send" title="Enviar">${ic('send')}</button>
-        </div>
+        </div>` : ''}
         <div class="comments" id="comments"><div class="muted small">Carregando...</div></div>`}
     </div>
-    ${canEd ? `<div class="drawer-foot">
+    ${canEd || canReview ? `<div class="drawer-foot">
+      ${canReview && approval === 'pendente' ? `<button class="btn btn-danger" id="t-reject">Recusar</button>` : ''}
       <div class="spacer"></div>
       <button class="btn" data-close>Cancelar</button>
-      <button class="btn btn-primary" id="t-save">${isNew ? 'Criar atividade' : 'Salvar'}</button>
+      ${canEd && !canReview ? `<button class="btn btn-primary" id="t-save">${isNew ? (isRequest ? 'Enviar para aprovação' : 'Criar atividade') : 'Salvar'}</button>` : ''}
+      ${canReview ? `<button class="btn" id="t-save">Salvar</button><button class="btn btn-primary" id="t-approve">${ic('ok')} Aprovar</button>` : ''}
     </div>` : ''}`;
 
   openModal({
@@ -1272,51 +1351,99 @@ async function openTask(id, defaults = {}) {
     onMount: ({ el, close }) => {
       const prog = $('#t-prog', el);
       const st = $('#t-status', el);
-      prog.oninput = () => {
-        $('#t-progv', el).textContent = prog.value + '%';
-        const v = Number(prog.value);
-        if (v === 100) st.value = 'concluido';
-        else if (v > 0 && st.value === 'nao_iniciado') st.value = 'em_andamento';
-        else if (v < 100 && st.value === 'concluido') st.value = 'em_andamento';
-      };
-      st.onchange = () => { if (st.value === 'concluido') { prog.value = 100; $('#t-progv', el).textContent = '100%'; } };
+      if (prog && st) {
+        prog.oninput = () => {
+          $('#t-progv', el).textContent = prog.value + '%';
+          const v = Number(prog.value);
+          if (v === 100) st.value = 'concluido';
+          else if (v > 0 && st.value === 'nao_iniciado') st.value = 'em_andamento';
+          else if (v < 100 && st.value === 'concluido') st.value = 'em_andamento';
+        };
+        st.onchange = () => { if (st.value === 'concluido') { prog.value = 100; $('#t-progv', el).textContent = '100%'; } };
+      }
       if (isNew) setTimeout(() => $('#t-title', el).focus(), 50);
 
+      const collect = () => {
+        const v = { title: $('#t-title', el).value.trim(), description: $('#t-desc', el).value.trim() };
+        if (st) { v.status = st.value; v.progress = Number(prog.value); }
+        if ($('#t-who', el)) {
+          v.assignee_id = $('#t-who', el).value || null;
+          v.due_date = $('#t-due', el).value || null;
+          v.priority = $('#t-prio', el).value;
+        }
+        if ($('#t-proj', el)) v.project_id = $('#t-proj', el).value;
+        return v;
+      };
+      const buildPatch = (vals) => {
+        const keys = [];
+        if (canText) keys.push('title', 'description');
+        if (canEd) keys.push('status', 'progress');
+        if (canPlan) keys.push('assignee_id', 'due_date', 'priority', 'project_id');
+        const patch = {};
+        for (const k of keys) if (k in vals && (vals[k] ?? null) !== (t[k] ?? null)) patch[k] = vals[k];
+        return patch;
+      };
+      const saveRow = async (patch) => {
+        if (!Object.keys(patch).length) return;
+        const row = await q(sb.from('tasks').update(patch).eq('id', t.id).select().single());
+        upsertLocal(S.tasks, row);
+        refresh();
+      };
+
       $('#t-save', el)?.addEventListener('click', async () => {
-        const vals = {
-          title: $('#t-title', el).value.trim(),
-          description: $('#t-desc', el).value.trim(),
-          assignee_id: $('#t-who', el).value || null,
-          due_date: $('#t-due', el).value || null,
-          priority: $('#t-prio', el).value,
-          status: st.value,
-          progress: Number(prog.value),
-        };
-        if (adm) vals.project_id = $('#t-proj', el).value;
+        const vals = collect();
         if (!vals.title) { toast('Dê um nome à atividade', 'error'); $('#t-title', el).focus(); return; }
         const btn = $('#t-save', el);
         btn.disabled = true;
         try {
           if (isNew) {
-            await createTask(vals);
-            toast('Atividade criada', 'ok');
-          } else {
-            const patch = {};
-            const keys = adm ? Object.keys(vals) : ['status', 'progress'];
-            for (const k of keys) if ((vals[k] ?? null) !== (t[k] ?? null)) patch[k] = vals[k];
-            if (Object.keys(patch).length) {
-              const row = await q(sb.from('tasks').update(patch).eq('id', t.id).select().single());
-              upsertLocal(S.tasks, row);
-              refresh();
+            if (isRequest) {
+              await createTask({ project_id: t.project_id, title: vals.title, description: vals.description });
+              toast('Solicitação enviada para aprovação', 'ok');
+            } else {
+              await createTask({ ...vals, project_id: vals.project_id || t.project_id });
+              toast('Atividade criada', 'ok');
             }
+          } else {
+            await saveRow(buildPatch(vals));
             toast('Atividade salva', 'ok');
           }
           close();
         } catch (e) { toastErr(e); btn.disabled = false; }
       });
 
+      $('#t-approve', el)?.addEventListener('click', async () => {
+        const vals = collect();
+        if (!vals.due_date) { toast('Defina a data de entrega para aprovar', 'error'); $('#t-due', el).focus(); return; }
+        if (!vals.title) { toast('Dê um nome à atividade', 'error'); return; }
+        try {
+          await saveRow({ ...buildPatch(vals), due_date: vals.due_date, priority: vals.priority, approval: 'aprovada', review_note: '' });
+          toast('Atividade aprovada', 'ok');
+          close();
+        } catch (e) { toastErr(e); }
+      });
+
+      $('#t-reject', el)?.addEventListener('click', () => {
+        openModal({
+          title: 'Recusar solicitação',
+          body: `<div class="field"><label>Motivo (aparece para ${esc(requester?.name || 'quem pediu')})</label><textarea class="textarea" id="rj" rows="3" placeholder="Ex.: já existe uma atividade para isso"></textarea></div>`,
+          foot: `<button class="btn" data-close>Voltar</button><button class="btn btn-danger" id="rj-ok">Recusar</button>`,
+          onMount: ({ el: m, close: closeM }) => {
+            $('#rj', m).focus();
+            $('#rj-ok', m).onclick = async () => {
+              try {
+                await saveRow({ approval: 'recusada', review_note: $('#rj', m).value.trim() });
+                closeM(); close();
+                toast('Solicitação recusada');
+              } catch (e) { toastErr(e); }
+            };
+          },
+        });
+      });
+
       $('#t-del', el)?.addEventListener('click', async () => {
-        const ok = await confirmDialog(`Excluir a atividade <b>${esc(t.title)}</b>?`, { okText: 'Excluir', danger: true, title: 'Excluir atividade' });
+        const msg = pending && !adm ? `Cancelar a solicitação <b>${esc(t.title)}</b>?` : `Excluir a atividade <b>${esc(t.title)}</b>?`;
+        const ok = await confirmDialog(msg, { okText: 'Excluir', danger: true, title: 'Excluir atividade' });
         if (!ok) return;
         try {
           await q(sb.from('tasks').delete().eq('id', t.id));
@@ -1338,7 +1465,7 @@ async function openTask(id, defaults = {}) {
               const mine = c.author_email === S.me.email;
               return `<div class="comment">${avatar(m || { name: c.author_email, email: c.author_email })}
                 <div class="bubble"><div class="h"><b>${esc(m?.name || c.author_email)}</b><span>${relTime(c.created_at)}</span>
-                ${mine || adm ? `<button data-delc="${c.id}">Apagar</button>` : ''}</div><p>${esc(c.body)}</p></div></div>`;
+                ${mine ? `<button data-delc="${c.id}">Apagar</button>` : ''}</div><p>${esc(c.body)}</p></div></div>`;
             }).join('') : '<div class="muted small">Nenhuma atualização ainda. Use este espaço para registrar o andamento, dúvidas ou pendências.</div>';
             $$('[data-delc]', box).forEach((b) => (b.onclick = async () => {
               try { await q(sb.from('task_comments').delete().eq('id', b.dataset.delc)); loadComments(); } catch (e) { toastErr(e); }
@@ -1360,8 +1487,8 @@ async function openTask(id, defaults = {}) {
           } catch (e) { toastErr(e); }
           $('#c-send', el).disabled = false;
         };
-        $('#c-send', el).onclick = send;
-        $('#c-body', el).onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } };
+        if ($('#c-send', el)) $('#c-send', el).onclick = send;
+        if ($('#c-body', el)) $('#c-body', el).onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } };
       }
     },
   });
@@ -1376,8 +1503,8 @@ function viewMine() {
   const ui = S.ui.mine;
   let base;
   if (ui.who === 'me' || !isAdmin()) base = myTasks();
-  else if (ui.who === 'all') base = S.tasks.filter((t) => project(t.project_id) && !project(t.project_id).archived);
-  else base = S.tasks.filter((t) => t.assignee_id === ui.who && project(t.project_id) && !project(t.project_id).archived);
+  else if (ui.who === 'all') base = S.tasks.filter((t) => isApproved(t) && activeProject(t));
+  else base = S.tasks.filter((t) => isApproved(t) && t.assignee_id === ui.who && activeProject(t));
   if (ui.q) { const qq = ui.q.toLowerCase(); base = base.filter((t) => t.title.toLowerCase().includes(qq)); }
   base = [...base].sort(sortByDue);
   const { late, soon } = alertsFor(base);
@@ -1386,7 +1513,13 @@ function viewMine() {
   const done = base.filter((t) => dueState(t) === 'done').sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
   const who = ui.who === 'me' || !isAdmin() ? 'Você' : ui.who === 'all' ? 'A equipe' : member(ui.who)?.name || '';
 
+  const qMatch = (t) => !ui.q || t.title.toLowerCase().includes(ui.q.toLowerCase());
+  const myReqs = S.tasks.filter((t) => !isApproved(t) && t.requested_by_email === S.me.email && activeProject(t) && qMatch(t));
+  const toApprove = isAdmin() && ui.who === 'me' ? pendingRequests().filter(qMatch) : [];
   const groups = [
+    { key: 'approve', label: 'Solicitações para você aprovar', color: '#1d4ed8', tasks: toApprove },
+    { key: 'req', label: 'Minhas solicitações aguardando aprovação', color: '#f59e0b', tasks: myReqs.filter((t) => approvalOf(t) === 'pendente') },
+    { key: 'refused', label: 'Minhas solicitações recusadas', color: '#e2445c', tasks: myReqs.filter((t) => approvalOf(t) === 'recusada') },
     { key: 'late', label: 'Atrasadas', color: '#e2445c', tasks: late },
     { key: 'soon', label: `Vencem nos próximos ${DUE_SOON_DAYS} dias`, color: '#f59e0b', tasks: soon },
     { key: 'ok', label: 'No prazo', color: '#579bfc', tasks: ok },
@@ -1426,7 +1559,7 @@ function viewTeam() {
   const adm = isAdmin();
   const list = [...S.members].sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
   const stats = (m) => {
-    const ts = S.tasks.filter((t) => t.assignee_id === m.id && project(t.project_id) && !project(t.project_id).archived);
+    const ts = S.tasks.filter((t) => isApproved(t) && t.assignee_id === m.id && activeProject(t));
     const open = ts.filter((t) => t.status !== 'concluido').length;
     const late = ts.filter((t) => dueState(t) === 'late').length;
     return `${open} em aberto${late ? ` · <span style="color:var(--danger);font-weight:600">${late} atrasada${late > 1 ? 's' : ''}</span>` : ''}`;
@@ -1934,19 +2067,10 @@ async function importBackup(file) {
   if (!ok) return;
   toast('Restaurando...');
   try {
-    // pessoas: pelo e-mail (o id pode ser diferente num projeto novo)
-    const mem = d.team_members.map(({ email, name, role, active, job_title }) => ({ email, name, role, active, job_title: job_title || '' }));
-    await upsertChunks('team_members', mem, { onConflict: 'email' });
-    const current = await fetchAll('team_members');
-    const byEmail = Object.fromEntries(current.map((m) => [m.email, m.id]));
-    const idMap = Object.fromEntries(d.team_members.map((m) => [m.id, byEmail[m.email] || null]));
-    await upsertChunks('projects', d.projects.map(({ id, name, description, color, archived, created_at }) => ({ id, name, description, color, archived, created_at })), { onConflict: 'id' });
-    await upsertChunks('tasks', d.tasks.map(({ id, project_id, title, description, assignee_id, due_date, status, progress, priority, created_at }) =>
-      ({ id, project_id, title, description, assignee_id: assignee_id ? idMap[assignee_id] ?? null : null, due_date, status, progress, priority, created_at })), { onConflict: 'id' });
-    await upsertChunks('task_comments', d.task_comments.map(({ id, task_id, author_email, body, created_at }) => ({ id, task_id, author_email, body, created_at })), { onConflict: 'id' });
+    const r = await q(sb.rpc('restore_backup', { payload: b }));
     await loadAll();
     refresh();
-    toast('Backup restaurado!', 'ok');
+    toast(`Backup restaurado: ${r?.projetos ?? d.projects.length} projetos, ${r?.atividades ?? d.tasks.length} atividades`, 'ok');
   } catch (e) { toastErr(e); }
 }
 function backupCardHtml() {

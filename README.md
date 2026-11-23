@@ -23,9 +23,11 @@ App web (funciona no computador e no celular) para organizar projetos e atividad
 3. **E-mail diário** (opcional, passo 7): de segunda a sexta às 8h, cada pessoa recebe a lista das atividades dela atrasadas ou vencendo.
 
 **Permissões**
-- **Administrador**: cria/edita/exclui projetos e atividades, distribui tarefas, gerencia a equipe.
-- **Colaborador**: vê todos os projetos; nas atividades em que é o responsável, muda **status** e **progresso**; comenta em qualquer atividade.
-- Essas regras são aplicadas **no banco de dados** (não só na tela). Então mesmo alguém "esperto" não consegue burlar.
+- **Administrador**: cria projetos e atividades, cadastra a equipe (a aba Equipe só aparece para admins), aprova ou recusa solicitações.
+- **Colaborador**: vê os projetos e as atividades aprovadas; **solicita** novas atividades para ele mesmo, que ficam *aguardando aprovação* até um admin aprovar definindo **prazo** e **prioridade** (ou recusar com um motivo).
+- **Cada atividade só pode ser alterada por quem passou (o admin que criou ou aprovou) e por quem recebeu (o responsável).** O responsável muda status, progresso e escreve atualizações; prazo, prioridade e responsável só quem passou. Outras pessoas (inclusive outros admins) apenas visualizam.
+- Se quem passou a atividade deixar de ser admin, qualquer admin assume essa atividade.
+- Essas regras são aplicadas **no banco de dados** (não só na tela).
 - As anotações são privadas de verdade: nem o administrador consegue ler as de outra pessoa.
 
 Automação: colocar o progresso em 100% marca como *Concluído* (e vice-versa). Sair de 0% muda de *Não iniciado* para *Em andamento*.
