@@ -28,6 +28,8 @@ const PRIORITY = {
 };
 const PROJECT_COLORS = ['#1d4ed8', '#00a862', '#fdab3d', '#e2445c', '#a25ddc', '#0ea5e9', '#ff642e', '#037f4c', '#784bd1', '#475569'];
 const PERSON_COLORS = ['#e2445c', '#00a862', '#f59e0b', '#2563eb', '#a25ddc', '#ff7575', '#037f4c', '#0ea5e9', '#ff642e', '#784bd1', '#bb3354', '#175a63'];
+const JOB_TITLES = ['CEO', 'Diretor', 'Gerente de projetos', 'Coordenador', 'Engenheiro', 'Engenheiro civil', 'Engenheiro eletricista', 'Engenheiro mecânico', 'Arquiteto', 'Projetista', 'Desenhista', 'Orçamentista', 'Técnico', 'Auxiliar', 'Estagiário', 'Administrativo'];
+const jobDatalist = () => `<datalist id="job-titles">${JOB_TITLES.map((j) => `<option value="${esc(j)}"></option>`).join('')}</datalist>`;
 const EMOJIS = ['📄', '📝', '📌', '✅', '💡', '📐', '📏', '🏗️', '🔧', '⚙️', '🔩', '🧱', '📊', '📈', '🗂️', '📅', '⚡', '🔥', '⭐', '🚧', '🧪', '🖊️', '📎', '🔒', '🎯', '🧭', '🛠️', '🏭', '🚀', '❗', '💬', '🧾'];
 
 // ---------------------------------------------------------------------
@@ -899,7 +901,7 @@ function popWho(anchor, t) {
   const el = openPopover(anchor, `
     <div class="ttl">Responsável</div>
     <div style="max-height:280px;overflow-y:auto">
-      ${list.map((m) => `<button class="menu-item" data-v="${m.id}">${avatar(m)} <span>${esc(m.name)}</span>${m.id === t.assignee_id ? ' <span style="margin-left:auto;color:var(--primary)">✓</span>' : ''}</button>`).join('')}
+      ${list.map((m) => `<button class="menu-item" data-v="${m.id}">${avatar(m)} <span style="min-width:0"><span style="display:block">${esc(m.name)}</span>${m.job_title ? `<span class="small muted">${esc(m.job_title)}</span>` : ''}</span>${m.id === t.assignee_id ? ' <span style="margin-left:auto;color:var(--primary)">✓</span>' : ''}</button>`).join('')}
       <button class="menu-item" data-v="">${avatar(null)} <span class="muted">Sem responsável</span></button>
     </div>`,
   (el) => $$('[data-v]', el).forEach((b) => (b.onclick = () => { closePopover(); updateTask(t.id, { assignee_id: b.dataset.v || null }); })),
@@ -1208,7 +1210,7 @@ async function openTask(id, defaults = {}) {
   const dis = adm ? '' : 'disabled';
   const disSP = canEd ? '' : 'disabled';
   const memberOpts = S.members.filter((m) => m.active || m.id === t.assignee_id)
-    .map((m) => `<option value="${m.id}" ${m.id === t.assignee_id ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
+    .map((m) => `<option value="${m.id}" ${m.id === t.assignee_id ? 'selected' : ''}>${esc(m.name)}${m.job_title ? ' — ' + esc(m.job_title) : ''}</option>`).join('');
   const projOpts = S.projects.filter((x) => !x.archived || x.id === t.project_id)
     .map((x) => `<option value="${x.id}" ${x.id === t.project_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
 
@@ -1424,18 +1426,23 @@ function viewTeam() {
       <form class="form-inline" id="add-m">
         <div class="field"><label>Nome</label><input class="input" name="name" placeholder="Nome completo" required /></div>
         <div class="field"><label>E-mail</label><input class="input" name="email" type="email" placeholder="nome@empresa.com.br" required /></div>
-        <div class="field"><label>Papel</label><select class="select" name="role"><option value="member">Colaborador</option><option value="admin">Administrador</option></select></div>
+        <div class="field"><label>Cargo / função</label><input class="input" name="job" list="job-titles" placeholder="Ex.: Projetista" /></div>
+        <div class="field"><label>Papel no app</label><select class="select" name="role"><option value="member">Colaborador</option><option value="admin">Administrador</option></select></div>
         <button class="btn btn-primary" type="submit" style="height:38px">${ic('plus')} Adicionar</button>
       </form>
-      <p class="small muted" style="margin:12px 0 0;line-height:1.5"><b>Colaborador</b>: vê todos os projetos, atualiza status/progresso das atividades dele e comenta. <b>Administrador</b>: cria projetos e atividades, distribui tarefas e gerencia a equipe.</p>
+      ${jobDatalist()}
+      <p class="small muted" style="margin:12px 0 0;line-height:1.5"><b>Cargo</b>: escolha uma sugestão ou digite qualquer outro. <b>Colaborador</b>: vê todos os projetos, atualiza status/progresso das atividades dele e comenta. <b>Administrador</b>: cria projetos e atividades, distribui tarefas e gerencia a equipe.</p>
     </div>` : ''}
     <div class="tbl team-list">
-      <div class="tr team-row th"><div class="td">Nome</div><div class="td">E-mail</div><div class="td">Papel</div><div class="td">Ativo</div><div class="td"></div></div>
+      <div class="tr team-row th"><div class="td">Nome</div><div class="td">E-mail</div><div class="td">Cargo</div><div class="td">Papel no app</div><div class="td">Ativo</div><div class="td"></div></div>
       ${list.map((m) => {
         const self = m.id === S.me.id;
         return `<div class="tr team-row" data-mid="${m.id}" style="${m.active ? '' : 'opacity:.6'}">
-          <div class="td c-name"><div class="person">${avatar(m, 'lg')}<div style="min-width:0"><b style="display:block">${esc(m.name)}${self ? ' <span class="muted small">(você)</span>' : ''}</b><span class="small muted">${stats(m)}</span></div></div></div>
+          <div class="td c-name"><div class="person">${avatar(m, 'lg')}<div style="min-width:0"><b style="display:block">${esc(m.name)}${self ? ' <span class="muted small">(você)</span>' : ''}</b>${m.job_title ? `<span class="small" style="display:block;color:var(--text-2)">${esc(m.job_title)}</span>` : ''}<span class="small muted">${stats(m)}</span></div></div></div>
           <div class="td c-email" style="overflow:hidden;text-overflow:ellipsis">${esc(m.email)}</div>
+          <div class="td c-job">${adm
+            ? `<input class="input" data-job list="job-titles" value="${esc(m.job_title || '')}" placeholder="Definir cargo" style="height:32px" />`
+            : `<span class="small">${esc(m.job_title || '—')}</span>`}</div>
           <div class="td c-role">${adm && !self
             ? `<select class="select" data-role style="height:32px"><option value="member" ${m.role === 'member' ? 'selected' : ''}>Colaborador</option><option value="admin" ${m.role === 'admin' ? 'selected' : ''}>Administrador</option></select>`
             : `<span class="small">${m.role === 'admin' ? 'Administrador' : 'Colaborador'}</span>`}</div>
@@ -1455,7 +1462,7 @@ function viewTeam() {
     const email = f.email.value.trim().toLowerCase();
     if (!name || !email.includes('@')) { toast('Preencha nome e e-mail válidos', 'error'); return; }
     try {
-      const row = await q(sb.from('team_members').insert({ name, email, role: f.role.value }).select().single());
+      const row = await q(sb.from('team_members').insert({ name, email, role: f.role.value, job_title: f.job.value.trim() }).select().single());
       upsertLocal(S.members, row);
       S.members.sort((a, b) => a.name.localeCompare(b.name));
       viewTeam();
@@ -1465,6 +1472,10 @@ function viewTeam() {
   $$('[data-mid]').forEach((rowEl) => {
     const m = member(rowEl.dataset.mid);
     if (!m) return;
+    $('[data-job]', rowEl)?.addEventListener('change', async (e) => {
+      try { upsertLocal(S.members, await q(sb.from('team_members').update({ job_title: e.target.value.trim() }).eq('id', m.id).select().single())); toast('Cargo atualizado', 'ok'); viewTeam(); }
+      catch (ex) { toastErr(ex); viewTeam(); }
+    });
     $('[data-role]', rowEl)?.addEventListener('change', async (e) => {
       try { upsertLocal(S.members, await q(sb.from('team_members').update({ role: e.target.value }).eq('id', m.id).select().single())); toast('Papel atualizado', 'ok'); }
       catch (ex) { toastErr(ex); viewTeam(); }
@@ -1912,7 +1923,7 @@ async function importBackup(file) {
   toast('Restaurando...');
   try {
     // pessoas: pelo e-mail (o id pode ser diferente num projeto novo)
-    const mem = d.team_members.map(({ email, name, role, active }) => ({ email, name, role, active }));
+    const mem = d.team_members.map(({ email, name, role, active, job_title }) => ({ email, name, role, active, job_title: job_title || '' }));
     await upsertChunks('team_members', mem, { onConflict: 'email' });
     const current = await fetchAll('team_members');
     const byEmail = Object.fromEntries(current.map((m) => [m.email, m.id]));

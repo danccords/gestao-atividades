@@ -14,8 +14,10 @@ create table if not exists public.team_members (
   name        text not null,
   role        text not null default 'member' check (role in ('admin', 'member')),
   active      boolean not null default true,
+  job_title   text not null default '',
   created_at  timestamptz not null default now()
 );
+alter table public.team_members add column if not exists job_title text not null default '';
 
 -- E-mail de quem está logado (vem do token de login)
 create or replace function public.current_email()
