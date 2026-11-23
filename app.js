@@ -46,7 +46,7 @@ const EMOJIS = ['📄', '📝', '📌', '✅', '💡', '📐', '📏', '🏗️'
 // ---------------------------------------------------------------------
 const S = {
   session: null, me: null, started: false, recovery: false,
-  members: [], projects: [], tasks: [], commentCounts: {},
+  members: [], projects: [], tasks: [], commentCounts: {}, lastUpdate: {},
   notes: null, channel: null, pop: null, leaveHook: null,
   ui: { projects: {}, mine: { who: 'me', q: '' }, showArchived: false, collapsed: {} },
   prefs: loadPrefs(),
@@ -498,7 +498,7 @@ async function loadAll() {
     q(sb.from('team_members').select('*').order('name')),
     q(sb.from('projects').select('*').order('created_at')),
     q(sb.from('tasks').select('*').order('created_at')),
-    q(sb.from('task_comments').select('task_id')),
+    fetchLastUpdates(),
   ]);
   S.members = members || [];
   S.projects = projects || [];
@@ -507,9 +507,33 @@ async function loadAll() {
   const meNow = S.members.find((m) => m.id === S.me.id);
   if (meNow) S.me = meNow;
 }
+// uma linha por atividade: última atualização + total de comentários (view task_last_update)
 function countComments(rows) {
   S.commentCounts = {};
-  for (const r of rows) S.commentCounts[r.task_id] = (S.commentCounts[r.task_id] || 0) + 1;
+  S.lastUpdate = {};
+  for (const r of rows) {
+    S.commentCounts[r.task_id] = Number(r.total) || 0;
+    S.lastUpdate[r.task_id] = r;
+  }
+}
+// Usa a view do banco (leve); se ela ainda não existir, calcula a partir dos comentários
+let lastUpdateViewOk = true;
+async function fetchLastUpdates() {
+  if (lastUpdateViewOk) {
+    const { data, error } = await sb.from('task_last_update').select('*');
+    if (!error) return data || [];
+    lastUpdateViewOk = false;
+  }
+  const rows = await q(sb.from('task_comments').select('task_id, body, author_email, created_at').order('created_at', { ascending: false }));
+  const m = {};
+  for (const r of rows || []) {
+    if (!m[r.task_id]) m[r.task_id] = { ...r, total: 0 };
+    m[r.task_id].total += 1;
+  }
+  return Object.values(m);
+}
+async function reloadLastUpdates() {
+  try { countComments(await fetchLastUpdates()); } catch { /* ignore */ }
 }
 function upsertLocal(arr, row) {
   const i = arr.findIndex((x) => x.id === row.id);
@@ -574,7 +598,7 @@ let commentReload = null;
 function onCommentChange(p) {
   clearTimeout(commentReload);
   commentReload = setTimeout(async () => {
-    try { countComments(await q(sb.from('task_comments').select('task_id'))); } catch { /* ignore */ }
+    await reloadLastUpdates();
     S.onCommentsChanged?.(p);
     scheduleRefresh();
   }, 300);
@@ -806,6 +830,26 @@ function whoCell(t) {
   return canPlanTask(t) ? `<div data-act="who" data-pop-anchor style="cursor:pointer;min-width:0;width:100%">${inner}</div>` : inner;
 }
 
+// Última atualização escrita na atividade (aparece na lista) + aviso de "sem atualização"
+function updateLine(t, compact = false) {
+  if (!isApproved(t)) return '';
+  const lu = S.lastUpdate[t.id];
+  const open = t.status !== 'concluido' && !!t.assignee_id;
+  const ageH = lu ? (Date.now() - new Date(lu.created_at).getTime()) / 3600000 : Infinity;
+  const days = Math.floor(ageH / 24);
+  const stale = open && ageH > 24;
+  const who = lu ? (memberByEmail(lu.author_email)?.name || lu.author_email) : '';
+  const txt = lu ? String(lu.body).replace(/\s*\n+\s*/g, ' · ') : '';
+  const canUpd = canEditTask(t) && open;
+  return `<div class="task-upd-wrap">
+    ${lu ? `<div class="task-upd" data-act="open" title="${esc(lu.body)}">${ic('msg')}<span><b>${esc(firstName(who))}</b> <span class="muted">${relTime(lu.created_at)}</span> — ${esc(txt)}</span></div>` : ''}
+    <div class="task-upd-actions">
+      ${stale ? `<span class="upd-stale">${lu ? `Sem atualização há ${days <= 1 ? '1 dia' : days + ' dias'}` : 'Nenhuma atualização ainda'}</span>` : ''}
+      ${canUpd && !compact ? `<button class="upd-btn" data-act="update">${ic('plus')} Atualização do dia</button>` : ''}
+    </div>
+  </div>`;
+}
+
 function taskRow(t, { color, showProject }) {
   const ed = canEditTask(t);
   const adm = canPlanTask(t);
@@ -817,6 +861,7 @@ function taskRow(t, { color, showProject }) {
       <div style="min-width:0;flex:1">
         <div class="task-title" data-act="open">${esc(t.title)}</div>
         ${showProject && p ? `<div class="task-proj"><i style="background:${esc(p.color)}"></i>${esc(p.name)}</div>` : ''}
+        ${updateLine(t)}
       </div>
       ${cc ? `<span class="cmt-count">${ic('msg')}${cc}</span>` : ''}
       <span data-act="open" style="display:flex;cursor:pointer">${ic('open', 'open-ic')}</span>
@@ -881,6 +926,7 @@ function bindViewEvents() {
     else if (act === 'prio') popPriority(actEl, t);
     else if (act === 'due') popDue(actEl, t);
     else if (act === 'who') popWho(actEl, t);
+    else if (act === 'update') dailyUpdate(t);
   });
   view.addEventListener('keydown', async (e) => {
     const inp = e.target.closest('[data-add]');
@@ -1128,6 +1174,7 @@ function viewProject(id, isRefresh) {
           const m = member(t.assignee_id);
           return `<div class="kcard" data-id="${t.id}" draggable="${canEditTask(t)}" style="--gc:${STATUS[k].color}">
             <div class="t" data-act="open">${esc(t.title)}</div>
+            ${updateLine(t, true)}
             ${progBar(t, false)}
             <div class="m">${dueChip(t, false)}<span class="person">${avatar(m)}</span></div>
           </div>`;
@@ -1261,6 +1308,43 @@ function bindKanban() {
 // ---------------------------------------------------------------------
 // Painel de detalhes da atividade
 // ---------------------------------------------------------------------
+// Atualização rápida do dia: o que fez, o que falta e o progresso
+function dailyUpdate(t) {
+  openModal({
+    title: 'Atualização do dia',
+    body: `<p class="muted small" style="margin:0 0 12px">${esc(t.title)}</p>
+      <div class="field"><label>✅ O que foi feito</label><textarea class="textarea" id="du-done" rows="3" placeholder="Ex.: terminei o cálculo das sapatas S1 a S6"></textarea></div>
+      <div class="field"><label>⏳ O que falta fazer</label><textarea class="textarea" id="du-todo" rows="3" placeholder="Ex.: falta a revisão e as pranchas de detalhamento"></textarea></div>
+      <div class="field"><label>Progresso</label>
+        <div class="range-row"><input type="range" id="du-prog" min="0" max="100" step="5" value="${t.progress}" /><b id="du-progv">${t.progress}%</b></div></div>`,
+    foot: `<button class="btn" data-close>Cancelar</button><button class="btn btn-primary" id="du-save">Salvar atualização</button>`,
+    onMount: ({ el, close }) => {
+      const r = $('#du-prog', el);
+      r.oninput = () => ($('#du-progv', el).textContent = r.value + '%');
+      setTimeout(() => $('#du-done', el).focus(), 50);
+      $('#du-save', el).onclick = async () => {
+        const done = $('#du-done', el).value.trim();
+        const todo = $('#du-todo', el).value.trim();
+        const prog = Number(r.value);
+        if (!done && !todo && prog === t.progress) { toast('Escreva o que foi feito ou o que falta', 'error'); return; }
+        $('#du-save', el).disabled = true;
+        try {
+          const parts = [];
+          if (done) parts.push(`✅ Feito: ${done}`);
+          if (todo) parts.push(`⏳ Falta: ${todo}`);
+          if (prog !== t.progress) parts.push(`📊 Progresso: ${t.progress}% → ${prog}%`);
+          await q(sb.from('task_comments').insert({ task_id: t.id, body: parts.join('\n'), author_email: S.me.email }));
+          close();
+          if (prog !== t.progress) await updateTask(t.id, { progress: prog });
+          await reloadLastUpdates();
+          refresh();
+          toast('Atualização registrada', 'ok');
+        } catch (e) { toastErr(e); $('#du-save', el).disabled = false; }
+      };
+    },
+  });
+}
+
 async function openTask(id, defaults = {}) {
   const isNew = !id;
   const t = isNew
@@ -1331,7 +1415,7 @@ async function openTask(id, defaults = {}) {
       ${isNew ? '' : `
         <div class="section-t">${ic('msg').replace('<svg', '<svg width="16" height="16"')} Atualizações e comentários</div>
         ${canEd ? `<div class="comment-form">
-          <textarea class="textarea" id="c-body" placeholder="Escreva uma atualização... (Ctrl+Enter envia)"></textarea>
+          <textarea class="textarea" id="c-body" placeholder="O que foi feito hoje e o que falta fazer... (Ctrl+Enter envia)"></textarea>
           <button class="btn btn-primary btn-icon" id="c-send" title="Enviar">${ic('send')}</button>
         </div>` : ''}
         <div class="comments" id="comments"><div class="muted small">Carregando...</div></div>`}
@@ -1484,6 +1568,7 @@ async function openTask(id, defaults = {}) {
             ta.value = '';
             S.commentCounts[t.id] = (S.commentCounts[t.id] || 0) + 1;
             await loadComments();
+            reloadLastUpdates().then(refresh);
           } catch (e) { toastErr(e); }
           $('#c-send', el).disabled = false;
         };
