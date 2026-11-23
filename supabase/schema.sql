@@ -180,6 +180,13 @@ create policy "com_apagar"  on public.task_comments for delete
 create policy "notas_dono" on public.notes for all
   using (owner = auth.uid()) with check (owner = auth.uid());
 
+-- Permissões básicas de acesso pela API (as regras acima decidem O QUE cada um vê)
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on public.team_members, public.projects, public.tasks,
+  public.task_comments, public.notes to authenticated;
+revoke all on public.team_members, public.projects, public.tasks, public.task_comments, public.notes from anon;
+grant execute on function public.current_email(), public.is_member(), public.is_admin() to authenticated;
+
 -- ---------------------------------------------------------------------
 -- 7. TEMPO REAL (a tela atualiza sozinha quando alguém muda algo)
 -- ---------------------------------------------------------------------

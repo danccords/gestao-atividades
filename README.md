@@ -1,4 +1,9 @@
-# Gestão de Atividades de Engenharia
+# Gestão de Atividades de Engenharia — ALLOS
+
+**App:** https://danccords.github.io/gestao-atividades/  
+**Supabase:** projeto `gestao-atividades` (organização ALLOS Engenharia, região São Paulo)
+
+> Já está tudo configurado. O passo a passo abaixo serve de referência caso precise refazer.
 
 App web (funciona no computador e no celular) para organizar projetos e atividades da equipe, no estilo Monday, com anotações privadas no estilo Notion. Os dados ficam no **Supabase**.
 
@@ -46,7 +51,7 @@ Automação: colocar o progresso em 100% marca como *Concluído* (e vice-versa).
 ### 3. Pegar as chaves e colocar no app
 1. **Project Settings → API** (ou **API Keys**).
 2. Copie a **Project URL** e a chave pública (**anon public** ou **publishable**).
-3. Abra `app/config.js` e cole nos campos `SUPABASE_URL` e `SUPABASE_ANON_KEY`.
+3. Abra `config.js` e cole nos campos `SUPABASE_URL` e `SUPABASE_ANON_KEY`.
    Aproveite e ajuste `COMPANY_NAME` e `DUE_SOON_DAYS` (dias de antecedência do aviso).
 
 > ⚠️ Nunca use a chave **service_role / secret** no app. A chave pública pode ficar no app; quem protege os dados são as regras do banco.
@@ -55,7 +60,7 @@ Automação: colocar o progresso em 100% marca como *Concluído* (e vice-versa).
 O Supabase guarda os dados, mas não hospeda o site. O jeito mais fácil e gratuito:
 
 1. Acesse <https://app.netlify.com/drop>.
-2. Arraste a **pasta `app`** inteira para a página.
+2. Arraste a pasta do app inteira para a página.
 3. Pronto: ele gera um endereço tipo `https://nome-aleatorio.netlify.app`. Crie uma conta grátis para manter o site e trocar o nome (Site settings → Change site name, ex.: `atividades-suaempresa.netlify.app`).
 
 Para atualizar depois, é só arrastar a pasta de novo em **Deploys**.
@@ -122,7 +127,7 @@ supabase/
 ```
 
 ## Personalizações comuns
-- **Dias de antecedência**: `DUE_SOON_DAYS` em `app/config.js` (e o secret `DUE_SOON_DAYS` da função de e-mail).
+- **Dias de antecedência**: `DUE_SOON_DAYS` em `config.js` (e o secret `DUE_SOON_DAYS` da função de e-mail).
 - **Horário do e-mail**: em `cron.sql`, `'0 11 * * 1-5'` = 11h UTC = 8h de Brasília, de segunda a sexta.
 - **Nomes/cores dos status**: `STATUS` no começo do `app/app.js`. Para criar um status novo, adicione também na regra `check (status in (...))` da tabela `tasks` no `schema.sql`.
 - **Tornar outra pessoa administradora**: aba **Equipe** → mude o papel para *Administrador*.
