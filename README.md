@@ -1,0 +1,134 @@
+# Gestão de Atividades de Engenharia
+
+App web (funciona no computador e no celular) para organizar projetos e atividades da equipe, no estilo Monday, com anotações privadas no estilo Notion. Os dados ficam no **Supabase**.
+
+## O que o app faz
+
+| Área | Quem vê | O que dá pra fazer |
+|---|---|---|
+| **Projetos** | Toda a equipe | Cards com progresso, atrasos e responsáveis de cada projeto |
+| **Atividades** (dentro do projeto) | Toda a equipe | Tabela estilo Monday (agrupada por status ou por responsável) ou Kanban. Cada atividade tem responsável, prazo, status, % de progresso, prioridade, descrição e comentários |
+| **Minhas atividades** | Cada pessoa | Suas atividades separadas em *Atrasadas*, *Vencem em breve*, *No prazo*... O admin pode ver as de qualquer pessoa ou de todo mundo |
+| **Anotações** | **Só o dono** | Páginas com títulos, listas, checklist, citações, código, links. Atalhos: `#` título, `-` lista, `[]` checklist, `>` citação. Salva sozinho |
+| **Equipe** | Toda a equipe (só o admin edita) | Cadastro dos e-mails de quem pode entrar, papel (admin/colaborador), ativar/desativar, mensagem de convite pronta |
+
+**Avisos de prazo** (padrão: 3 dias antes, ajustável):
+1. **No app**: sino com contador, alertas vermelhos/amarelos em "Minhas atividades" e contador no menu.
+2. **Notificação no aparelho**: ao abrir o app, a pessoa recebe uma notificação do celular/computador (precisa clicar em "Ativar notificações" uma vez).
+3. **E-mail diário** (opcional, passo 7): de segunda a sexta às 8h, cada pessoa recebe a lista das atividades dela atrasadas ou vencendo.
+
+**Permissões**
+- **Administrador**: cria/edita/exclui projetos e atividades, distribui tarefas, gerencia a equipe.
+- **Colaborador**: vê todos os projetos; nas atividades em que é o responsável, muda **status** e **progresso**; comenta em qualquer atividade.
+- Essas regras são aplicadas **no banco de dados** (não só na tela). Então mesmo alguém "esperto" não consegue burlar.
+- As anotações são privadas de verdade: nem o administrador consegue ler as de outra pessoa.
+
+Automação: colocar o progresso em 100% marca como *Concluído* (e vice-versa). Sair de 0% muda de *Não iniciado* para *Em andamento*.
+
+---
+
+## Passo a passo para colocar no ar (cerca de 30 minutos)
+
+### 1. Criar o projeto no Supabase
+1. Entre em <https://supabase.com> → **New project**.
+2. Dê um nome (ex.: `atividades-engenharia`), crie uma senha do banco e escolha a região **South America (São Paulo)**.
+
+### 2. Criar o banco de dados
+1. No menu lateral: **SQL Editor** → **New query**.
+2. Abra o arquivo `supabase/schema.sql`, copie tudo, cole e clique em **Run**.
+3. Ainda no SQL Editor, rode isto com **o seu e-mail e nome** (isso faz de você o administrador):
+   ```sql
+   insert into public.team_members (email, name, role)
+   values ('seu.email@empresa.com.br', 'Seu Nome', 'admin');
+   ```
+   Use o e-mail **todo em minúsculas**.
+
+### 3. Pegar as chaves e colocar no app
+1. **Project Settings → API** (ou **API Keys**).
+2. Copie a **Project URL** e a chave pública (**anon public** ou **publishable**).
+3. Abra `app/config.js` e cole nos campos `SUPABASE_URL` e `SUPABASE_ANON_KEY`.
+   Aproveite e ajuste `COMPANY_NAME` e `DUE_SOON_DAYS` (dias de antecedência do aviso).
+
+> ⚠️ Nunca use a chave **service_role / secret** no app. A chave pública pode ficar no app; quem protege os dados são as regras do banco.
+
+### 4. Publicar o app (para gerar o link que a equipe vai usar)
+O Supabase guarda os dados, mas não hospeda o site. O jeito mais fácil e gratuito:
+
+1. Acesse <https://app.netlify.com/drop>.
+2. Arraste a **pasta `app`** inteira para a página.
+3. Pronto: ele gera um endereço tipo `https://nome-aleatorio.netlify.app`. Crie uma conta grátis para manter o site e trocar o nome (Site settings → Change site name, ex.: `atividades-suaempresa.netlify.app`).
+
+Para atualizar depois, é só arrastar a pasta de novo em **Deploys**.
+(Alternativas: Vercel, Cloudflare Pages ou GitHub Pages. Funciona igual: é só um site estático.)
+
+### 5. Configurar o login no Supabase
+Em **Authentication**:
+1. **URL Configuration** → em **Site URL** coloque o endereço do app (ex.: `https://atividades-suaempresa.netlify.app`) e adicione o mesmo em **Redirect URLs**.
+2. **Sign In / Providers → Email**: deixe ativado. Recomendo manter **Confirm email** ligado.
+3. **(Recomendado) Hooks** → **Add hook** → **Before User Created** → tipo **Postgres** → schema `public`, função `hook_before_user_created`. Isso impede que alguém fora da lista da equipe crie conta.
+4. **(Importante para equipes) SMTP**: o e-mail padrão do Supabase só envia poucas mensagens por hora e serve só para testes. Configure um SMTP próprio em **Authentication → Emails → SMTP Settings** (o Resend do passo 7 serve: host `smtp.resend.com`, porta `465`, usuário `resend`, senha = sua API key).
+5. (Opcional) Em **Emails → Templates** traduza os textos de "Confirm signup" e "Reset password" para português.
+
+### 6. Primeiro acesso e cadastro da equipe
+1. Abra o link do app → **Primeiro acesso** → use o e-mail que você cadastrou no passo 2 → crie a senha → confirme pelo e-mail recebido → entre.
+2. Vá em **Equipe** e cadastre cada colaborador (nome + e-mail). O app mostra uma **mensagem de convite pronta** para mandar no WhatsApp/e-mail.
+3. Cada colaborador faz o mesmo: abre o link → **Primeiro acesso** → cria a senha.
+
+### 7. (Opcional) Aviso de prazo por e-mail
+1. Crie uma conta em <https://resend.com> (grátis até 3.000 e-mails/mês). Em **Domains**, verifique o domínio da empresa (para enviar de `avisos@suaempresa.com.br`). Sem domínio verificado, o Resend só envia para o seu próprio e-mail (serve para testar).
+2. Crie uma **API Key** no Resend.
+3. No Supabase: **Edge Functions** → **Deploy a new function** → **Via Editor**.
+   - Nome: `notify-due-tasks`
+   - Apague o código de exemplo e cole o conteúdo de `supabase/functions/notify-due-tasks/index.ts` → **Deploy**.
+   - Nas configurações da função, **desligue "Verify JWT / Enforce JWT verification"** (a função tem a própria senha, a `CRON_SECRET`).
+4. **Edge Functions → Secrets** → adicione:
+   | Nome | Valor |
+   |---|---|
+   | `RESEND_API_KEY` | a chave do Resend |
+   | `MAIL_FROM` | `Atividades <avisos@suaempresa.com.br>` |
+   | `APP_URL` | endereço do app |
+   | `CRON_SECRET` | invente uma senha longa |
+   | `DUE_SOON_DAYS` | `3` (opcional) |
+5. Abra `supabase/cron.sql`, troque `SEU-PROJETO` (está na Project URL) e `SUA-SENHA-DO-CRON` (a mesma `CRON_SECRET`), e rode no **SQL Editor**.
+   Para testar na hora, rode o bloco comentado no final do arquivo.
+
+Pela linha de comando (alternativa ao editor):
+```bash
+supabase functions deploy notify-due-tasks --no-verify-jwt
+```
+
+---
+
+## Usar no celular como aplicativo
+- **Android (Chrome)**: abra o link → menu ⋮ → **Instalar app** (ou "Adicionar à tela inicial").
+- **iPhone (Safari)**: abra o link → botão **Compartilhar** → **Adicionar à Tela de Início**.
+
+O app abre em tela cheia, com ícone próprio e menu inferior. No iPhone, as notificações do aparelho só funcionam depois de instalar na tela de início (iOS 16.4 ou mais novo).
+
+---
+
+## Estrutura dos arquivos
+```
+app/                         ← o site (é esta pasta que vai para o Netlify)
+  index.html
+  app.js                     ← toda a lógica das telas
+  styles.css                 ← visual (computador e celular)
+  config.js                  ← URL e chave do Supabase, nome da empresa, dias de aviso
+  manifest.webmanifest, sw.js, icons/   ← permitem instalar no celular
+supabase/
+  schema.sql                 ← tabelas e regras de segurança (rodar 1 vez)
+  cron.sql                   ← agendamento do e-mail diário
+  functions/notify-due-tasks/index.ts   ← envio do e-mail de aviso
+```
+
+## Personalizações comuns
+- **Dias de antecedência**: `DUE_SOON_DAYS` em `app/config.js` (e o secret `DUE_SOON_DAYS` da função de e-mail).
+- **Horário do e-mail**: em `cron.sql`, `'0 11 * * 1-5'` = 11h UTC = 8h de Brasília, de segunda a sexta.
+- **Nomes/cores dos status**: `STATUS` no começo do `app/app.js`. Para criar um status novo, adicione também na regra `check (status in (...))` da tabela `tasks` no `schema.sql`.
+- **Tornar outra pessoa administradora**: aba **Equipe** → mude o papel para *Administrador*.
+
+## Problemas comuns
+- **"Acesso não liberado" depois de entrar**: o e-mail não está na aba Equipe (ou está com letra maiúscula diferente / desativado).
+- **Não chega e-mail de confirmação**: limite do e-mail padrão do Supabase. Configure o SMTP (passo 5.4). Para destravar alguém na hora: **Authentication → Users** → no usuário, **Confirm user** (ou "Send magic link").
+- **Link de confirmação abre uma página errada**: confira a **Site URL** e as **Redirect URLs** (passo 5.1).
+- **Mudei o app e o celular mostra a versão antiga**: feche e abra o app de novo (ele busca a versão nova automaticamente quando tem internet).
