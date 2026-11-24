@@ -39,7 +39,7 @@ App web (funciona no computador e no celular) para organizar projetos e atividad
 - **Tamanho P/M/G** pesa no progresso do projeto (P=1, M=2, G=3).
 - **Para você decidir**: na tela inicial e no sino aparecem solicitações e pedidos de prazo esperando você.
 - **Histórico** automático de cada atividade (quem aprovou, mudou prazo, concluiu etapa...).
-- Atividades *Livres* continuam com status e % manuais. Subatividades viraram um checklist simples e não mexem mais no progresso.
+- **Subatividades pesam no progresso**: cada uma pertence a uma etapa e preenche o intervalo dela (ex.: etapa 30% → 65% com 2 de 4 feitas = 47%). O botão "Concluir etapa" só libera quando todas as subatividades daquela etapa estiverem feitas. Em atividades *Livres*, sem subatividades o % é manual; com subatividades, o % vem delas (até 99%) e o "Concluído" é marcado pelo responsável.
 
 ---
 

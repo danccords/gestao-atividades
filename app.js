@@ -916,7 +916,7 @@ function taskRow(t, { color, showProject }) {
     <div class="td col-who">${whoCell(t)}</div>
     <div class="td col-status">${hasStages(t) ? stagePill(t) : statusPill(t, ed)}</div>
     <div class="td c col-due">${dueChip(t, adm)}</div>
-    <div class="td col-prog">${progBar(t, ed && !hasStages(t))}</div>
+    <div class="td col-prog">${progBar(t, ed && !autoProg(t))}</div>
     <div class="td c col-prio">${prioPill(t, adm)}</div>
   </div>`;
 }
@@ -1062,6 +1062,16 @@ const hasStages = (t) => Array.isArray(t?.stages) && t.stages.length > 0;
 const typeById = (id) => S.types.find((x) => x.id === id);
 const activeTypes = () => S.types.filter((x) => x.active).sort((a, b) => (a.position - b.position) || a.name.localeCompare(b.name));
 
+// Progresso automático: por etapas ou, na atividade Livre, pelas subatividades
+const autoProg = (t) => hasStages(t) || (!!t.id && subsOf(t.id).length > 0);
+// Subatividades que faltam numa etapa
+const subsPendingIn = (t, stageName) => subsOf(t.id).filter((x) => x.stage_name === stageName && !x.done).length;
+async function reloadTask(id) {
+  try {
+    const { data } = await sb.from('tasks').select('*').eq('id', id).single();
+    if (data) { upsertLocal(S.tasks, data); S.onTaskChanged?.(); scheduleRefresh(); }
+  } catch (e) { console.warn(e); }
+}
 function stageInfo(t) {
   const list = hasStages(t) ? t.stages : [];
   const next = list.findIndex((x) => !x.done_at);
@@ -1647,35 +1657,57 @@ function mountSubtasks(el, t, canEd) {
   const box = $('#subs-box', el);
   if (!box) return;
   const members = S.members.filter((m) => m.active);
+  const subRow = (x, stageOpts) => {
+    const m = member(x.assignee_id);
+    const late = !x.done && x.due_date && daysUntil(x.due_date) < 0;
+    return `<div class="sub ${x.done ? 'done' : ''}" data-sid="${x.id}">
+      <input type="checkbox" class="sub-ck" ${x.done ? 'checked' : ''} ${canEd ? '' : 'disabled'} />
+      <div class="sub-main">
+        <input class="sub-title" value="${esc(x.title)}" ${canEd ? '' : 'disabled'} />
+        <div class="sub-meta">
+          <select class="sub-who" ${canEd ? '' : 'disabled'} title="Responsável">
+            <option value="">Sem responsável</option>
+            ${members.map((mm) => `<option value="${mm.id}" ${mm.id === x.assignee_id ? 'selected' : ''}>${esc(mm.name)}</option>`).join('')}
+            ${m && !m.active ? `<option value="${m.id}" selected>${esc(m.name)}</option>` : ''}
+          </select>
+          <input type="date" class="sub-due ${late ? 'late' : ''}" value="${x.due_date || ''}" ${canEd ? '' : 'disabled'} title="Prazo" />
+          ${stageOpts ? `<select class="sub-stage" ${canEd ? '' : 'disabled'} title="Etapa">${stageOpts.map((o) => `<option value="${esc(o)}" ${o === x.stage_name ? 'selected' : ''}>${esc(o)}</option>`).join('')}${stageOpts.includes(x.stage_name) ? '' : '<option value="" selected>Sem etapa</option>'}</select>` : ''}
+        </div>
+      </div>
+      ${canEd ? `<button class="btn btn-ghost btn-icon btn-sm sub-del" title="Excluir subatividade">${ic('x')}</button>` : ''}
+    </div>`;
+  };
   const render = () => {
+    const cur = task(t.id) || t;
     const list = subsOf(t.id);
     const done = list.filter((x) => x.done).length;
+    const staged = hasStages(cur);
+    const { list: stages, next } = stageInfo(cur);
+    const names = stages.map((x) => x.name);
+    let groups = '';
+    if (staged && list.length) {
+      groups = stages.map((st, i) => {
+        const items = list.filter((x) => x.stage_name === st.name);
+        if (!items.length) return '';
+        const from = i ? stages[i - 1].pct : 0;
+        const d = items.filter((x) => x.done).length;
+        const tag = st.done_at ? '<span class="sg-tag ok">concluída</span>' : i === next ? '<span class="sg-tag cur">etapa atual</span>' : '';
+        return `<div class="sub-group ${st.done_at ? 'past' : ''}"><div class="sg-head"><b>${esc(st.name)}</b> <span class="muted">${from}% → ${st.pct}%</span> ${tag}<span class="sg-n">${d}/${items.length}</span></div>
+          <div class="subs">${items.map((x) => subRow(x, names)).join('')}</div></div>`;
+      }).join('');
+      const orphans = list.filter((x) => !names.includes(x.stage_name));
+      if (orphans.length) groups += `<div class="sub-group"><div class="sg-head"><b>Sem etapa</b> <span class="muted">não conta no progresso</span></div><div class="subs">${orphans.map((x) => subRow(x, names)).join('')}</div></div>`;
+    } else {
+      groups = `<div class="subs">${list.map((x) => subRow(x, null)).join('')}</div>`;
+    }
+    const defStage = staged ? (next >= 0 ? stages[next].name : stages[stages.length - 1].name) : '';
     box.innerHTML = `
       <div class="section-t">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Subatividades
         ${list.length ? `<span class="muted small" style="font-weight:500">${done} de ${list.length} concluídas</span>` : ''}</div>
-      ${list.length ? `<div class="prog" style="margin:-2px 0 10px"><div class="bar"><i class="${done === list.length ? 'full' : ''}" style="width:${Math.round(done / list.length * 100)}%"></i></div></div>` : ''}
-      <div class="subs">
-        ${list.map((x) => {
-          const m = member(x.assignee_id);
-          const late = !x.done && x.due_date && daysUntil(x.due_date) < 0;
-          return `<div class="sub ${x.done ? 'done' : ''}" data-sid="${x.id}">
-            <input type="checkbox" class="sub-ck" ${x.done ? 'checked' : ''} ${canEd ? '' : 'disabled'} />
-            <div class="sub-main">
-              <input class="sub-title" value="${esc(x.title)}" ${canEd ? '' : 'disabled'} />
-              <div class="sub-meta">
-                <select class="sub-who" ${canEd ? '' : 'disabled'} title="Responsável pela etapa">
-                  <option value="">Sem responsável</option>
-                  ${members.map((mm) => `<option value="${mm.id}" ${mm.id === x.assignee_id ? 'selected' : ''}>${esc(mm.name)}</option>`).join('')}
-                  ${m && !m.active ? `<option value="${m.id}" selected>${esc(m.name)}</option>` : ''}
-                </select>
-                <input type="date" class="sub-due ${late ? 'late' : ''}" value="${x.due_date || ''}" ${canEd ? '' : 'disabled'} title="Prazo da etapa" />
-              </div>
-            </div>
-            ${canEd ? `<button class="btn btn-ghost btn-icon btn-sm sub-del" title="Excluir etapa">${ic('x')}</button>` : ''}
-          </div>`;
-        }).join('')}
-      </div>
-      ${canEd ? `<div class="sub-add"><span>${ic('plus')}</span><input id="sub-new" placeholder="Adicionar subatividade e tecle Enter" /></div>`
+      <div class="small muted" style="margin:-4px 0 8px">${staged ? 'Cada subatividade feita avança o progresso dentro da etapa dela. A etapa só pode ser concluída quando todas as subatividades dela estiverem feitas.' : 'Com subatividades, o progresso é calculado por elas (até 99%). Para concluir, mude o status para Concluído.'}</div>
+      ${groups}
+      ${canEd ? `<div class="sub-add"><span>${ic('plus')}</span><input id="sub-new" placeholder="Adicionar subatividade e tecle Enter" />
+        ${staged ? `<select id="sub-new-stage" class="sub-stage" title="Etapa">${names.map((o) => `<option value="${esc(o)}" ${o === defStage ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>` : ''}</div>`
         : (list.length ? '' : '<div class="muted small">Nenhuma subatividade.</div>')}`;
 
     $$('.sub', box).forEach((row) => {
@@ -1685,6 +1717,7 @@ function mountSubtasks(el, t, canEd) {
         try {
           const r = await q(sb.from('subtasks').update(patch).eq('id', x.id).select().single());
           upsertLocal(S.subtasks, r);
+          if ('done' in patch || 'stage_name' in patch) await reloadTask(t.id);
         } catch (e) { toastErr(e); }
       };
       $('.sub-ck', row)?.addEventListener('change', async (e) => {
@@ -1697,11 +1730,13 @@ function mountSubtasks(el, t, canEd) {
       $('.sub-title', row)?.addEventListener('change', (e) => { const v = e.target.value.trim(); if (v) save({ title: v }); else e.target.value = x.title; });
       $('.sub-title', row)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
       $('.sub-who', row)?.addEventListener('change', (e) => save({ assignee_id: e.target.value || null }));
+      $('.sub-stage', row)?.addEventListener('change', (e) => save({ stage_name: e.target.value || null }).then(render));
       $('.sub-due', row)?.addEventListener('change', (e) => save({ due_date: e.target.value || null }).then(render));
       $('.sub-del', row)?.addEventListener('click', async () => {
         try {
           await q(sb.from('subtasks').delete().eq('id', x.id));
           S.subtasks = S.subtasks.filter((s) => s.id !== x.id);
+          await reloadTask(t.id);
           render(); refresh();
           } catch (e) { toastErr(e); }
       });
@@ -1715,8 +1750,10 @@ function mountSubtasks(el, t, canEd) {
       inp.disabled = true;
       try {
         const pos = Math.max(0, ...subsOf(t.id).map((x) => x.position)) + 1;
-        const r = await q(sb.from('subtasks').insert({ task_id: t.id, title, position: pos }).select().single());
+        const stg = $('#sub-new-stage', box)?.value;
+        const r = await q(sb.from('subtasks').insert({ task_id: t.id, title, position: pos, ...(stg ? { stage_name: stg } : {}) }).select().single());
         upsertLocal(S.subtasks, r);
+        await reloadTask(t.id);
         render(); refresh();
         $('#sub-new', box)?.focus();
       } catch (ex) { toastErr(ex); inp.disabled = false; }
@@ -1724,6 +1761,7 @@ function mountSubtasks(el, t, canEd) {
   };
   render();
   S.onSubsChanged = () => { if (!box.contains(document.activeElement)) render(); };
+  return () => { if (!box.contains(document.activeElement)) render(); };
 }
 
 // Atualização rápida do dia: o que fez, o que falta e o avanço
@@ -1732,14 +1770,16 @@ function dailyUpdate(t) {
   const { list, next } = stageInfo(t);
   const nx = staged && next >= 0 ? list[next] : null;
   const mgr = isApproved(t) ? isTaskManager(t) : isAdmin();
-  const stageLabel = nx ? `Concluí a etapa "${esc(nx.name)}" (${nx.pct}%)` : '';
+  const falta = nx ? subsPendingIn(t, nx.name) : 0;
+  const stageLabel = nx ? (falta ? `Concluir a etapa "${esc(nx.name)}" — falta${falta > 1 ? 'm' : ''} ${falta} subatividade${falta > 1 ? 's' : ''}` : `Concluí a etapa "${esc(nx.name)}" (${nx.pct}%)`) : '';
+  const subAuto = !staged && subsOf(t.id).length > 0;
   openModal({
     title: 'Atualização do dia',
     body: `<p class="muted small" style="margin:0 0 12px">${esc(t.title)}${staged && nx ? ` · etapa atual: <b>${esc(nx.name)}</b>` : ''}</p>
       <div class="field"><label>✅ O que foi feito</label><textarea class="textarea" id="du-done" rows="3" placeholder="Ex.: terminei o cálculo das sapatas S1 a S6"></textarea></div>
       <div class="field"><label>⏳ O que falta fazer</label><textarea class="textarea" id="du-todo" rows="3" placeholder="Ex.: falta a revisão e as pranchas de detalhamento"></textarea></div>
-      ${staged ? (nx ? `<label class="du-stage"><input type="checkbox" id="du-stage" /> ${stageLabel}</label>` : '')
-        : `<div class="field"><label>Progresso</label>
+      ${staged ? (nx ? `<label class="du-stage" ${falta ? 'style="opacity:.6"' : ''}><input type="checkbox" id="du-stage" ${falta ? 'disabled' : ''} /> ${stageLabel}</label>` : '')
+        : subAuto ? `<div class="small muted">Progresso calculado pelas subatividades (${t.progress}%).</div>` : `<div class="field"><label>Progresso</label>
         <div class="range-row"><input type="range" id="du-prog" min="0" max="100" step="5" value="${t.progress}" /><b id="du-progv">${t.progress}%</b></div></div>`}`,
     foot: `<button class="btn" data-close>Cancelar</button><button class="btn btn-primary" id="du-save">Salvar atualização</button>`,
     onMount: ({ el, close }) => {
@@ -1899,7 +1939,7 @@ async function openTask(id, defaults = {}) {
     body,
     onClose: () => { S.onCommentsChanged = null; S.onSubsChanged = null; S.onTaskChanged = null; S.onDueChanged = null; },
     onMount: ({ el, close }) => {
-      if (!isNew) mountSubtasks(el, t, canEd);
+      const rerenderSubs = isNew ? null : mountSubtasks(el, t, canEd);
       // ---------- estado das etapas no painel ----------
       let draftStages = hasStages(t) ? t.stages.map((x) => ({ ...x })) : null;   // etapas em edição (nova/estrutura)
       let editing = isNew;                                                         // editor aberto direto só ao criar
@@ -1915,6 +1955,10 @@ async function openTask(id, defaults = {}) {
           sc.innerHTML = `<div class="small muted">Definido pelas etapas · <b style="color:var(--text)">${(STATUS[cur.status] || STATUS.nao_iniciado).label}</b></div>`;
           pc.innerHTML = `<div class="range-row"><div class="prog" style="flex:1"><div class="bar"><i class="${cur.progress >= 100 ? 'full' : ''}" style="width:${cur.progress}%"></i></div></div><b>${cur.progress}%</b></div>
             <div class="small muted">Calculado pela última etapa concluída</div>`;
+        } else if (autoProg(cur)) {
+          sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>`;
+          pc.innerHTML = `<div class="range-row"><div class="prog" style="flex:1"><div class="bar"><i class="${cur.progress >= 100 ? 'full' : ''}" style="width:${cur.progress}%"></i></div></div><b>${cur.progress}%</b></div>
+            <div class="small muted">Calculado pelas subatividades</div>`;
         } else {
           sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>`;
           pc.innerHTML = `<div class="range-row"><input type="range" id="t-prog" min="0" max="100" step="5" value="${cur.progress}" ${D(canEd)} /><b id="t-progv">${cur.progress}%</b></div>`;
@@ -1978,8 +2022,11 @@ async function openTask(id, defaults = {}) {
               : `<div class="stage-msg">Aguardando ${esc(firstName(creatorName))} confirmar <b>${esc(list[pend].name)}</b>.</div>
                  ${canEd ? `<div class="stage-btns"><button type="button" class="btn btn-sm" data-sa="cancel" data-i="${pend}">Cancelar pedido</button></div>` : ''}`;
           } else if (canEd && nx) {
-            const needConfirm = false;
-            actions = `<div class="stage-btns"><button type="button" class="btn btn-primary" data-sa="${needConfirm ? 'request' : 'done'}" data-i="${next}">${ic('ok')} ${needConfirm ? `Terminei "${esc(nx.name)}" — pedir confirmação` : `Concluir etapa "${esc(nx.name)}"`}</button></div>
+            const falta = subsPendingIn(cur, nx.name);
+            actions = falta
+              ? `<div class="stage-btns"><button type="button" class="btn" disabled>${ic('ok')} Concluir etapa "${esc(nx.name)}"</button></div>
+                 <div class="small muted" style="margin-top:6px">Falta${falta > 1 ? 'm' : ''} ${falta} subatividade${falta > 1 ? 's' : ''} desta etapa para liberar.</div>`
+              : `<div class="stage-btns"><button type="button" class="btn btn-primary" data-sa="done" data-i="${next}">${ic('ok')} Concluir etapa "${esc(nx.name)}"</button></div>
               ${pending ? `<div class="small muted" style="margin-top:6px">A atividade ainda não foi aprovada; o avanço só conta no projeto depois da aprovação.</div>` : ''}`;
           }
           const canUndo = prevDone && pend < 0 && (stageMgr || canEd);
@@ -1997,7 +2044,7 @@ async function openTask(id, defaults = {}) {
             }
             b.disabled = true;
             await stageAction(t, i, act);
-            renderStages(); renderStatusProg();
+            renderStages(); renderStatusProg(); rerenderSubs?.();
           }));
         }
         $('#stg-edit', box)?.addEventListener('click', () => { editing = true; draftStages = hasStages(cur) ? cur.stages.map((x) => ({ ...x })) : []; renderStages(); renderStatusProg(); });
@@ -2010,7 +2057,7 @@ async function openTask(id, defaults = {}) {
       };
       renderStages();
       renderStatusProg();
-      S.onTaskChanged = () => { if (!editing && !el.querySelector('.stage-box-busy')) { renderStages(); renderStatusProg(); } };
+      S.onTaskChanged = () => { if (!editing && !el.querySelector('.stage-box-busy')) { renderStages(); renderStatusProg(); } rerenderSubs?.(); };
 
       // ---------- impedimento ----------
       const holdSel = $('#t-hold', el);
@@ -2100,6 +2147,7 @@ async function openTask(id, defaults = {}) {
           if (k === 'stages' ? JSON.stringify(a) !== JSON.stringify(b) : a !== b) patch[k] = vals[k];
         }
         if (hasStages(live()) && !('stages' in patch)) { delete patch.status; delete patch.progress; }
+        else if (autoProg(live())) delete patch.progress;
         return patch;
       };
       const checkStages = (vals) => {

@@ -738,3 +738,13 @@ a { color: var(--primary); text-decoration: none; }
   .stg-name { flex: 1 1 60%; }
   .stepper { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Subatividades agrupadas por etapa */
+.sub-group { margin-bottom: 10px; }
+.sub-group.past { opacity: .7; }
+.sg-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12.5px; margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.sg-head .sg-n { margin-left: auto; font-weight: 600; color: var(--text-2); }
+.sg-tag { font-size: 11px; font-weight: 600; border-radius: 8px; padding: 0 7px; }
+.sg-tag.ok { background: var(--ok-soft); color: var(--ok); }
+.sg-tag.cur { background: var(--primary-soft); color: var(--primary); }
+.sub-add .sub-stage { height: 30px; font-size: 12.5px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-2); max-width: 45%; }
