@@ -96,6 +96,7 @@ const P = {
   minus: '<path d="M5 12h14"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
+  spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
 };
 const ic = (name, cls = '') =>
@@ -361,6 +362,8 @@ function renderBoot() {
 }
 
 function renderAuth(mode = 'login', notice = '') {
+  $('#ai-panel')?.remove();
+  AI.msgs = [];
   document.title = APP_NAME;
   const tab = (m, label) => `<button type="button" class="${mode === m ? 'active' : ''}" data-mode="${m}">${label}</button>`;
   let form = '';
@@ -657,6 +660,7 @@ function renderShell() {
       </header>
       <div class="view" id="view"></div>
     </main>
+    <button class="ai-fab" id="ai-fab" title="Assistente IA">${ic('spark')}<span>Assistente</span></button>
     <nav class="bottomnav">
       <a href="#/inicio" data-nav="inicio">${ic('home')}<span>Projetos</span></a>
       <a href="#/minhas" data-nav="minhas">${ic('check')}<span>Minhas</span><span class="count" id="bn-count" hidden></span></a>
@@ -667,6 +671,7 @@ function renderShell() {
   $('#logout').onclick = logout;
   $('#bell').onclick = (e) => openBell(e.currentTarget);
   $('#me-btn').onclick = (e) => openMeMenu(e.currentTarget);
+  $('#ai-fab').onclick = toggleAssistant;
   $('#back').onclick = () => { if (S.backTo) location.hash = S.backTo; };
   bindViewEvents();
   updateChrome();
@@ -2095,6 +2100,103 @@ function mountEditor(note, renderList) {
   });
 }
 
+
+// ---------------------------------------------------------------------
+// ASSISTENTE IA (Gemini, via Edge Function "assistente")
+// ---------------------------------------------------------------------
+const AI = { msgs: [], busy: false };
+function aiSuggestions() {
+  const base = ['Quais são minhas atividades mais urgentes?', 'O que eu preciso fazer hoje?', 'Quais atividades estão atrasadas?'];
+  if (isAdmin()) return ['O que a equipe tem que fazer hoje?', 'Quem está sem atualizar as atividades?', 'Tem solicitação esperando aprovação?', 'Resumo do andamento de cada projeto', ...base.slice(0, 1)];
+  return [...base, 'O que falta fazer nas minhas atividades?'];
+}
+function mdLite(text) {
+  const lines = esc(text).split('\n');
+  let html = '', inList = false;
+  for (let line of lines) {
+    line = line.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*(?!\s)(.+?)\*(?!\*)/g, '$1<i>$2</i>');
+    const li = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (li) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${li[1]}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    const h = line.match(/^#{1,4}\s+(.*)$/);
+    html += h ? `<p><b>${h[1]}</b></p>` : line.trim() ? `<p>${line}</p>` : '';
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+function toggleAssistant() {
+  if ($('#ai-panel')) { $('#ai-panel').remove(); $('#ai-fab').hidden = false; return; }
+  closePopover();
+  const el = document.createElement('div');
+  el.id = 'ai-panel';
+  el.className = 'ai-panel';
+  el.innerHTML = `
+    <div class="ai-head">
+      <div class="ai-title">${ic('spark')}<div><b>Assistente IA</b><span>Pergunte sobre as atividades</span></div></div>
+      <button class="btn btn-ghost btn-icon btn-sm" id="ai-clear" title="Nova conversa">${ic('trash')}</button>
+      <button class="btn btn-ghost btn-icon btn-sm" id="ai-close" title="Fechar">${ic('x')}</button>
+    </div>
+    <div class="ai-body" id="ai-body"></div>
+    <form class="ai-form" id="ai-form">
+      <textarea id="ai-input" rows="1" placeholder="Pergunte algo…"></textarea>
+      <button class="btn btn-primary btn-icon" type="submit" id="ai-send" title="Enviar">${ic('send')}</button>
+    </form>`;
+  document.body.appendChild(el);
+  $('#ai-fab').hidden = true;
+  $('#ai-close', el).onclick = toggleAssistant;
+  $('#ai-clear', el).onclick = () => { AI.msgs = []; renderAI(); };
+  const input = $('#ai-input', el);
+  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#ai-form').requestSubmit(); } });
+  $('#ai-form', el).onsubmit = (e) => { e.preventDefault(); askAI(input.value); };
+  renderAI();
+  if (innerWidth > 860) setTimeout(() => input.focus(), 50);
+}
+function renderAI() {
+  const body = $('#ai-body');
+  if (!body) return;
+  if (!AI.msgs.length) {
+    body.innerHTML = `<div class="ai-hello"><div class="ai-spark">${ic('spark')}</div>
+      <b>Olá, ${esc(firstName(S.me.name))}!</b><p>Eu leio as atividades que você pode ver no app e te ajudo a priorizar. Experimente:</p>
+      <div class="ai-chips">${aiSuggestions().map((q) => `<button class="ai-chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+      <p class="ai-note">As respostas são geradas por IA (Google Gemini) e podem conter erros. Suas anotações pessoais nunca são enviadas.</p></div>`;
+    $$('[data-q]', body).forEach((b) => (b.onclick = () => askAI(b.dataset.q)));
+    return;
+  }
+  body.innerHTML = AI.msgs.map((m) => m.role === 'user'
+    ? `<div class="ai-msg me">${esc(m.text)}</div>`
+    : `<div class="ai-msg bot ${m.error ? 'err' : ''}">${mdLite(m.text)}</div>`).join('')
+    + (AI.busy ? '<div class="ai-msg bot"><span class="ai-dots"><i></i><i></i><i></i></span></div>' : '');
+  body.scrollTop = body.scrollHeight;
+}
+async function askAI(text) {
+  text = String(text || '').trim();
+  if (!text || AI.busy) return;
+  const input = $('#ai-input');
+  if (input) { input.value = ''; input.style.height = 'auto'; }
+  AI.msgs.push({ role: 'user', text });
+  AI.busy = true;
+  renderAI();
+  try {
+    const history = AI.msgs.filter((m) => !m.error).slice(-12).map(({ role, text }) => ({ role, text }));
+    const { data, error } = await sb.functions.invoke('assistente', { body: { messages: history } });
+    if (error) {
+      let code = '';
+      try { code = (await error.context?.json())?.error || ''; } catch { /* ignore */ }
+      throw new Error(code || error.message || 'erro');
+    }
+    AI.msgs.push({ role: 'assistant', text: data?.reply || 'Não consegui gerar uma resposta.' });
+  } catch (e) {
+    const m = String(e.message || e);
+    const msg = /not_configured/.test(m) ? 'O assistente ainda não foi configurado: falta cadastrar a chave do Gemini no Supabase.'
+      : /Failed to send|Failed to fetch|404|not found/i.test(m) ? 'O assistente ainda não está instalado no servidor (função "assistente" do Supabase).'
+      : /ai_failed/.test(m) ? 'A IA não respondeu agora (limite gratuito do dia ou instabilidade). Tente de novo em alguns minutos.'
+      : 'Não consegui falar com o assistente agora. Tente de novo.';
+    AI.msgs.push({ role: 'assistant', text: msg, error: true });
+  }
+  AI.busy = false;
+  renderAI();
+}
 
 // ---------------------------------------------------------------------
 // BACKUP (o plano grátis do Supabase não tem backup automático)
