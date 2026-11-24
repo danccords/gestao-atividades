@@ -106,6 +106,13 @@ supabase functions deploy notify-due-tasks --no-verify-jwt
 
 ---
 
+## Assistente IA (Gemini)
+Botão roxo ✨ no canto da tela. Responde perguntas como "quais são minhas atividades mais urgentes?" ou "o que a equipe tem que fazer hoje?".
+- Funciona pela Edge Function `assistente` (código em `supabase/functions/assistente/index.ts`), com a chave guardada no secret `GEMINI_API_KEY` do Supabase.
+- A IA só recebe as atividades que a pessoa já pode ver no app. Anotações privadas nunca são enviadas.
+- Plano gratuito do Gemini: tem limite diário de uso, e o Google pode usar as perguntas para melhorar os produtos dele. Para tirar isso, ative o faturamento na conta do Google AI Studio.
+- Para trocar o modelo, crie o secret `GEMINI_MODEL` (ex.: `gemini-3.6-flash`).
+
 ## Backup
 O plano grátis do Supabase **não faz backup automático**. Por isso o app tem backup próprio:
 - **Equipe → Backup dos dados** (só admin): baixa um arquivo `.json` com projetos, atividades, comentários e a equipe. O app lembra o admin quando passar 7 dias sem backup.
