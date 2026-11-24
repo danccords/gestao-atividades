@@ -407,20 +407,14 @@ drop policy if exists "com_ver"     on public.task_comments;
 drop function if exists public.is_task_manager(text);
 drop function if exists public.is_task_manager(text, text);
 
--- Quem gerencia a atividade:
---  aprovada: quem criou/aprovou (se ainda for admin ativo); se não for mais, qualquer admin
---  pendente/recusada: quem pediu e qualquer admin
+-- Quem gerencia a atividade (prazo, prioridade, responsável, etapas, confirmações):
+--  qualquer administrador ativo, em qualquer atividade
+--  colaborador: só a própria solicitação enquanto não for aprovada
 create or replace function public.is_task_manager(p_created_by_email text, p_approval text)
 returns boolean language sql stable security definer set search_path = public as $$
-  select case
-    when coalesce(p_approval, 'aprovada') <> 'aprovada' then
-      public.is_admin() or coalesce(p_created_by_email, '') = public.current_email()
-    else
-      (coalesce(p_created_by_email, '') = public.current_email() and public.is_admin())
-      or (public.is_admin() and not exists (
-            select 1 from public.team_members
-             where email = p_created_by_email and role = 'admin' and active))
-  end;
+  select public.is_admin()
+      or (coalesce(p_approval, 'aprovada') <> 'aprovada'
+          and coalesce(p_created_by_email, '') = public.current_email());
 $$;
 
 create or replace function public.can_touch_task(p_task_id uuid)

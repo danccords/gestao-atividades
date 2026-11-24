@@ -192,16 +192,14 @@ const isApproved = (t) => approvalOf(t) === 'aprovada';
 //  pendente/recusada: quem pediu (só nome/descrição) e os admins
 function isTaskManager(t) {
   if (!S.me) return false;
-  if (!t.id) return true;
-  if (!isApproved(t)) return isAdmin() || t.created_by_email === S.me.email;
-  if (t.created_by_email === S.me.email && isAdmin()) return true;
-  return isAdmin() && !S.members.some((m) => m.email === t.created_by_email && m.role === 'admin' && m.active);
+  if (!t.id || isAdmin()) return true;
+  return !isApproved(t) && t.created_by_email === S.me.email;
 }
 // Prazo, prioridade, responsável e projeto
 function canPlanTask(t) {
   return isApproved(t) ? isTaskManager(t) : isAdmin();
 }
-// Status, progresso e atualizações: quem passou e quem recebeu
+// Status, progresso e atualizações: administradores e o responsável
 function canEditTask(t) {
   return isTaskManager(t) || (!!S.me && t.assignee_id === S.me.id);
 }
@@ -1185,16 +1183,22 @@ function stagePill(t) {
 }
 
 // Decisões que estão esperando por mim (aprovar, confirmar etapa, novo prazo)
+// Decisões de etapa/prazo vão para quem passou; se ele não for mais admin, para todos os admins
+function decidesFor(t) {
+  if (!isAdmin()) return false;
+  if (t.created_by_email === S.me.email) return true;
+  return !S.members.some((m) => m.email === t.created_by_email && m.role === 'admin' && m.active);
+}
 function myDecisions() {
   const out = [];
   if (isAdmin()) pendingRequests().forEach((t) => out.push({ t, kind: 'aprovar', label: 'Aprovar solicitação', since: t.created_at }));
-  S.tasks.filter((t) => activeProject(t) && isApproved(t) && hasStages(t) && isTaskManager(t)).forEach((t) => {
+  S.tasks.filter((t) => activeProject(t) && isApproved(t) && hasStages(t) && decidesFor(t)).forEach((t) => {
     const { pend, list } = stageInfo(t);
     if (pend >= 0) out.push({ t, kind: 'etapa', label: `Confirmar etapa "${list[pend].name}"`, since: list[pend].requested_at });
   });
   S.dueRequests.filter((r) => r.status === 'pendente').forEach((r) => {
     const t = task(r.task_id);
-    if (t && activeProject(t) && isTaskManager(t)) out.push({ t, kind: 'prazo', label: `Novo prazo: ${fmtDate(r.old_due) || 'sem prazo'} → ${fmtDate(r.new_due)}`, since: r.created_at });
+    if (t && activeProject(t) && decidesFor(t)) out.push({ t, kind: 'prazo', label: `Novo prazo: ${fmtDate(r.old_due) || 'sem prazo'} → ${fmtDate(r.new_due)}`, since: r.created_at });
   });
   return out.sort((a, b) => (a.since || '').localeCompare(b.since || ''));
 }
@@ -1787,9 +1791,9 @@ async function openTask(id, defaults = {}) {
   } else if (!isNew && approval === 'recusada') {
     note = `<div class="alert danger" style="margin-bottom:14px">${ic('alert')}<div><b>Solicitação recusada</b>${t.review_note ? esc(t.review_note) : 'Sem motivo informado.'}</div></div>`;
   } else if (!isNew && !mgr && canEd) {
-    note = `<div class="readonly-note">Atividade passada por <b>${esc(creatorName)}</b>. Você é o responsável: avance as etapas e registre as atualizações. Prazo e prioridade são de ${esc(firstName(creatorName))}; se precisar, peça novo prazo.</div>`;
+    note = `<div class="readonly-note">Atividade passada por <b>${esc(creatorName)}</b>. Você é o responsável: avance as etapas e registre as atualizações. Prazo e prioridade são definidos pelos administradores; se precisar, peça novo prazo.</div>`;
   } else if (!isNew && !canEd) {
-    note = `<div class="readonly-note">${lockIc} Atividade passada por <b>${esc(creatorName)}</b>${assignee ? ` para <b>${esc(assignee.name)}</b>` : ''}. Somente ${assignee ? 'os dois podem' : 'quem passou pode'} alterar ou comentar.</div>`;
+    note = `<div class="readonly-note">${lockIc} Atividade passada por <b>${esc(creatorName)}</b>${assignee ? ` para <b>${esc(assignee.name)}</b>` : ''}. Somente ${assignee ? 'o responsável e os administradores podem' : 'os administradores podem'} alterar ou comentar.</div>`;
   }
 
   const body = `
