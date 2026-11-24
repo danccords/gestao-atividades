@@ -46,7 +46,7 @@ const EMOJIS = ['📄', '📝', '📌', '✅', '💡', '📐', '📏', '🏗️'
 // ---------------------------------------------------------------------
 const S = {
   session: null, me: null, started: false, recovery: false,
-  members: [], projects: [], tasks: [], commentCounts: {}, lastUpdate: {}, subtasks: [],
+  members: [], projects: [], tasks: [], commentCounts: {}, lastUpdate: {}, subtasks: [], types: [], dueRequests: [],
   notes: null, channel: null, pop: null, leaveHook: null,
   ui: { projects: {}, mine: { who: 'me', q: '' }, showArchived: false, collapsed: {} },
   prefs: loadPrefs(),
@@ -497,17 +497,21 @@ async function afterLogin() {
 // Dados
 // ---------------------------------------------------------------------
 async function loadAll() {
-  const [members, projects, tasks, comments, subtasks] = await Promise.all([
+  const [members, projects, tasks, comments, subtasks, types, dueRequests] = await Promise.all([
     q(sb.from('team_members').select('*').order('name')),
     q(sb.from('projects').select('*').order('created_at')),
     q(sb.from('tasks').select('*').order('created_at')),
     fetchLastUpdates(),
     sb.from('subtasks').select('*').order('position').order('created_at').then(({ data }) => data || []),
+    sb.from('activity_types').select('*').order('position').then(({ data }) => data || []),
+    sb.from('due_requests').select('*').order('created_at', { ascending: false }).then(({ data }) => data || []),
   ]);
   S.members = members || [];
   S.projects = projects || [];
   S.tasks = tasks || [];
   S.subtasks = subtasks || [];
+  S.types = types || [];
+  S.dueRequests = dueRequests || [];
   countComments(comments || []);
   const meNow = S.members.find((m) => m.id === S.me.id);
   if (meNow) S.me = meNow;
@@ -582,8 +586,10 @@ async function createTask(fields) {
 function setupRealtime() {
   teardownRealtime();
   S.channel = sb.channel('equipe-db')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => applyChange(S.tasks, p))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => { applyChange(S.tasks, p); S.onTaskChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (p) => applyChange(S.projects, p))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_types' }, (p) => applyChange(S.types, p))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'due_requests' }, (p) => { applyChange(S.dueRequests, p); S.onDueChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, (p) => { applyChange(S.subtasks, p); S.onSubsChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'task_comments' }, onCommentChange)
     .subscribe();
@@ -644,7 +650,8 @@ function renderShell() {
         <a href="#/inicio" data-nav="inicio">${ic('home')} Projetos</a>
         <a href="#/minhas" data-nav="minhas">${ic('check')} Minhas atividades <span class="count" id="nav-count" hidden></span></a>
         <a href="#/notas" data-nav="notas">${ic('note')} Anotações</a>
-        ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')} Equipe</a>` : ''}
+        ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')} Equipe</a>
+        <a href="#/modelos" data-nav="modelos">${ic('checksq')} Modelos de etapas</a>` : ''}
       </nav>
       <div class="nav-section">Projetos</div>
       <div class="nav-projects" id="nav-projects"></div>
@@ -687,7 +694,7 @@ async function logout() {
 
 function updateChrome() {
   const { late, soon } = alertsFor(myTasks());
-  const n = late.length + soon.length + (isAdmin() ? pendingRequests().length : 0);
+  const n = late.length + soon.length + myDecisions().length;
   const badge = $('#bell-badge');
   if (badge) { badge.hidden = n === 0; badge.textContent = n > 99 ? '99+' : n; }
   for (const id of ['#nav-count', '#bn-count']) {
@@ -715,16 +722,18 @@ function openBell(anchor) {
   if (S.pop) { closePopover(); return; }
   const { late, soon } = alertsFor(myTasks());
   const items = [...late, ...soon].sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
-  const reqs = isAdmin() ? pendingRequests() : [];
+  const reqs = myDecisions();
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const html = `
     <div class="ttl">Avisos de prazo</div>
     <div class="notif-list">
-      ${reqs.map((t) => `
-        <div class="notif" data-task="${t.id}">
+      ${reqs.length ? '<div class="ttl" style="padding-top:2px">Para você decidir</div>' : ''}
+      ${reqs.map((d) => `
+        <div class="notif" data-task="${d.t.id}">
           <span class="dot" style="background:var(--primary)"></span>
-          <div><b>Aprovar: ${esc(t.title)}</b><span>${esc(memberByEmail(t.requested_by_email)?.name || '')} · ${esc(project(t.project_id)?.name || '')}</span></div>
+          <div><b>${esc(d.label)}</b><span>${esc(d.t.title)} · ${esc(project(d.t.project_id)?.name || '')} · ${waitText(d.since)}</span></div>
         </div>`).join('')}
+      ${reqs.length && items.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
       ${items.length || reqs.length ? items.map((t) => `
         <div class="notif" data-task="${t.id}">
           <span class="dot" style="background:${dueState(t) === 'late' ? 'var(--danger)' : 'var(--warn)'}"></span>
@@ -807,6 +816,7 @@ function renderView(r, isRefresh) {
     case 'minhas': return viewMine();
     case 'notas': return viewNotes(r.id);
     case 'equipe': if (!isAdmin()) { location.hash = '#/inicio'; return; } return viewTeam();
+    case 'modelos': return viewModels();
     default: return viewHome();
   }
 }
@@ -849,7 +859,7 @@ function subChip(t) {
 
 // Última atualização escrita na atividade (aparece na lista) + aviso de "sem atualização"
 function updateLine(t, compact = false) {
-  if (!isApproved(t)) return '';
+  if (!isApproved(t)) return t.started_early ? `<div class="task-badges"><span class="dec-badge">Já iniciada (aguardando aprovação)</span></div>` : '';
   const lu = S.lastUpdate[t.id];
   const open = t.status !== 'concluido' && !!t.assignee_id;
   const ageH = lu ? (Date.now() - new Date(lu.created_at).getTime()) / 3600000 : Infinity;
@@ -858,7 +868,15 @@ function updateLine(t, compact = false) {
   const who = lu ? (memberByEmail(lu.author_email)?.name || lu.author_email) : '';
   const txt = lu ? String(lu.body).replace(/\s*\n+\s*/g, ' · ') : '';
   const canUpd = canEditTask(t) && open;
+  const dueReq = S.dueRequests.find((r) => r.task_id === t.id && r.status === 'pendente');
+  const { pend } = stageInfo(t);
+  const badges = [
+    t.hold ? `<span class="hold-badge">⏸ ${esc(HOLDS[t.hold] || t.hold)}${t.hold_note ? ` — ${esc(t.hold_note)}` : ''}</span>` : '',
+    pend >= 0 ? `<span class="dec-badge">${isTaskManager(t) ? 'Confirmar etapa' : 'Aguardando confirmação'}</span>` : '',
+    dueReq ? `<span class="dec-badge">📅 Pedido de novo prazo: ${fmtDate(dueReq.new_due)}</span>` : '',
+  ].join('');
   return `<div class="task-upd-wrap">
+    ${badges ? `<div class="task-badges">${badges}</div>` : ''}
     ${lu ? `<div class="task-upd" data-act="open" title="${esc(lu.body)}">${ic('msg')}<span><b>${esc(firstName(who))}</b> <span class="muted">${relTime(lu.created_at)}</span> — ${esc(txt)}</span></div>` : ''}
     <div class="task-upd-actions">
       ${stale ? `<span class="upd-stale">${lu ? `Sem atualização há ${days <= 1 ? '1 dia' : days + ' dias'}` : 'Nenhuma atualização ainda'}</span>` : ''}
@@ -885,9 +903,9 @@ function taskRow(t, { color, showProject }) {
       <span data-act="open" style="display:flex;cursor:pointer">${ic('open', 'open-ic')}</span>
     </div>
     <div class="td col-who">${whoCell(t)}</div>
-    <div class="td col-status">${statusPill(t, ed)}</div>
+    <div class="td col-status">${hasStages(t) ? stagePill(t) : statusPill(t, ed)}</div>
     <div class="td c col-due">${dueChip(t, adm)}</div>
-    <div class="td col-prog">${progBar(t, ed)}</div>
+    <div class="td col-prog">${progBar(t, ed && !hasStages(t))}</div>
     <div class="td c col-prio">${prioPill(t, adm)}</div>
   </div>`;
 }
@@ -1019,6 +1037,258 @@ function popWho(anchor, t) {
 }
 
 // ---------------------------------------------------------------------
+// ETAPAS (modelos de etapas e avanço por etapa)
+// ---------------------------------------------------------------------
+const HOLDS = {
+  '': 'Sem impedimento',
+  cliente: 'Aguardando cliente',
+  fornecedor: 'Aguardando fornecedor',
+  interno: 'Aguardando informação interna',
+  bloqueado: 'Bloqueado',
+};
+const SIZES = { P: { label: 'Pequena', w: 1 }, M: { label: 'Média', w: 2 }, G: { label: 'Grande', w: 3 } };
+const hasStages = (t) => Array.isArray(t?.stages) && t.stages.length > 0;
+const typeById = (id) => S.types.find((x) => x.id === id);
+const activeTypes = () => S.types.filter((x) => x.active).sort((a, b) => (a.position - b.position) || a.name.localeCompare(b.name));
+
+function stageInfo(t) {
+  const list = hasStages(t) ? t.stages : [];
+  const next = list.findIndex((x) => !x.done_at);
+  const pend = list.findIndex((x) => x.requested_at && !x.done_at);
+  return { list, next, pend, done: list.filter((x) => x.done_at).length, all: list.length > 0 && next === -1 };
+}
+function copyStages(type) {
+  return (type?.stages || []).map((x) => ({ name: x.name, pct: Number(x.pct), confirm: !!x.confirm }));
+}
+function sameStructure(a, b) {
+  const k = (l) => JSON.stringify((l || []).map((x) => [x.name, Number(x.pct), !!x.confirm]));
+  return k(a) === k(b);
+}
+function distributeStages(list) {
+  const n = list.length;
+  return list.map((x, i) => ({ ...x, pct: i === n - 1 ? 100 : Math.round(((i + 1) / n) * 100) }));
+}
+// Remove uma etapa e redistribui o "peso" dela proporcionalmente entre as outras
+function removeStageAt(list, idx) {
+  const inc = list.map((x, i) => Number(x.pct) - (i ? Number(list[i - 1].pct) : 0));
+  const rest = list.filter((_, i) => i !== idx);
+  const restInc = inc.filter((_, i) => i !== idx);
+  const total = restInc.reduce((a, b) => a + b, 0);
+  if (!rest.length) return [];
+  if (total <= 0) return distributeStages(rest);
+  let acc = 0;
+  return rest.map((x, i) => {
+    acc += restInc[i];
+    return { ...x, pct: i === rest.length - 1 ? 100 : Math.max(1, Math.round((acc / total) * 100)) };
+  });
+}
+function validateStages(list) {
+  if (!list.length) return 'Inclua pelo menos uma etapa.';
+  let prev = 0;
+  for (const [i, x] of list.entries()) {
+    if (!String(x.name || '').trim()) return `Dê um nome para a etapa ${i + 1}.`;
+    const p = Number(x.pct);
+    if (!Number.isFinite(p) || p <= prev || p > 100) return `A % da etapa "${x.name}" precisa ser maior que a da etapa anterior (${prev}%) e no máximo 100%.`;
+    prev = p;
+  }
+  if (prev !== 100) return 'A última etapa precisa valer 100%.';
+  return '';
+}
+function weightedProgress(list) {
+  let sw = 0, sp = 0;
+  for (const t of list) { const w = SIZES[t.size || 'M']?.w || 2; sw += w; sp += w * (t.progress || 0); }
+  return sw ? Math.round(sp / sw) : 0;
+}
+function stageColors(color, n) {
+  return Array.from({ length: n }, (_, i) => `color-mix(in srgb, ${color} ${Math.round(35 + (65 * (i + 1)) / n)}%, white)`);
+}
+
+// Editor de etapas (usado nos modelos e para ajustar uma atividade)
+function stageEditor(box, initial, { color = '#1d4ed8', onChange } = {}) {
+  let list = (initial || []).map((x) => ({ ...x, pct: Number(x.pct) }));
+  const changed = () => { onChange?.(list); };
+  const bar = () => {
+    const cols = stageColors(color, list.length);
+    return list.map((x, i) => `<i style="width:${Math.max(0, Number(x.pct) - (i ? Number(list[i - 1].pct) : 0))}%;background:${cols[i]}" title="${esc(x.name)}: ${x.pct}%"></i>`).join('');
+  };
+  const refreshMeta = () => {
+    $('.stg-bar', box).innerHTML = bar();
+    $('.stg-err', box).textContent = list.length ? validateStages(list) : '';
+  };
+  const render = () => {
+    box.innerHTML = `
+      <div class="stg-bar">${bar()}</div>
+      <div class="stg-list">
+        ${list.map((x, i) => `<div class="stg-row" data-i="${i}">
+          <div class="stg-mv"><button type="button" class="btn btn-ghost btn-sm" data-up ${i ? '' : 'disabled'} title="Subir">▲</button><button type="button" class="btn btn-ghost btn-sm" data-down ${i < list.length - 1 ? '' : 'disabled'} title="Descer">▼</button></div>
+          <input class="input stg-name" value="${esc(x.name)}" placeholder="Nome da etapa" />
+          <div class="stg-pct"><input class="input" type="number" min="1" max="100" step="1" value="${x.pct}" /><span>%</span></div>
+          <label class="stg-conf" title="A conclusão desta etapa precisa ser confirmada por quem passou a atividade"><input type="checkbox" ${x.confirm ? 'checked' : ''} /> confirma</label>
+          ${x.done_at ? `<span class="stg-done" title="Etapa já concluída">${ic('check')}</span>` : ''}
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-del title="Remover etapa">${ic('x')}</button>
+        </div>`).join('')}
+      </div>
+      <div class="stg-actions">
+        <button type="button" class="btn btn-sm" data-add>${ic('plus')} Etapa</button>
+        <button type="button" class="btn btn-sm" data-eq>Distribuir igualmente</button>
+        <span class="small muted">Para cada etapa: "quando ela termina, quanto da atividade está pronto?"</span>
+      </div>
+      <div class="err stg-err"></div>`;
+    $$('.stg-row', box).forEach((row) => {
+      const i = Number(row.dataset.i);
+      $('.stg-name', row).oninput = (e) => { list[i].name = e.target.value; refreshMeta(); changed(); };
+      $('.stg-pct input', row).oninput = (e) => { list[i].pct = Number(e.target.value); refreshMeta(); changed(); };
+      $('.stg-conf input', row).onchange = (e) => { list[i].confirm = e.target.checked; changed(); };
+      $('[data-up]', row).onclick = () => { if (i) { const nm = list[i].name; list[i].name = list[i - 1].name; list[i - 1].name = nm; const c = list[i].confirm; list[i].confirm = list[i - 1].confirm; list[i - 1].confirm = c; render(); changed(); } };
+      $('[data-down]', row).onclick = () => { if (i < list.length - 1) { const nm = list[i].name; list[i].name = list[i + 1].name; list[i + 1].name = nm; const c = list[i].confirm; list[i].confirm = list[i + 1].confirm; list[i + 1].confirm = c; render(); changed(); } };
+      $('[data-del]', row).onclick = () => { list = removeStageAt(list, i); render(); changed(); };
+    });
+    $('[data-add]', box).onclick = () => {
+      const n = list.length;
+      if (!n) list = [{ name: '', pct: 100, confirm: false }];
+      else {
+        const prevPrev = n > 1 ? Number(list[n - 2].pct) : 0;
+        list[n - 1] = { ...list[n - 1], pct: Math.max(prevPrev + 1, Math.round((prevPrev + 100) / 2)) };
+        list.push({ name: '', pct: 100, confirm: false });
+      }
+      render(); changed();
+      $$('.stg-name', box).pop()?.focus();
+    };
+    $('[data-eq]', box).onclick = () => { list = distributeStages(list); render(); changed(); };
+    refreshMeta();
+  };
+  render();
+  return { get: () => list.map((x) => ({ ...x, name: String(x.name).trim(), pct: Number(x.pct) })), validate: () => validateStages(list) };
+}
+
+// Barra de etapas (somente leitura)
+function stepperHtml(t) {
+  const { list, next, pend } = stageInfo(t);
+  return `<div class="stepper">${list.map((x, i) => {
+    const st = x.done_at ? 'done' : i === pend ? 'pend' : i === next ? 'cur' : 'todo';
+    return `<div class="stp ${st}" title="${esc(x.name)}${x.done_at ? ' — concluída em ' + new Date(x.done_at).toLocaleDateString('pt-BR') : ''}">
+      <div class="stp-dot">${x.done_at ? ic('check') : i + 1}</div>
+      <div class="stp-name">${esc(x.name)}</div>
+      <div class="stp-pct">${x.pct}%${x.confirm ? ' · confirma' : ''}</div></div>`;
+  }).join('')}</div>`;
+}
+
+// Pílula da etapa atual (aparece na coluna Status)
+function stagePill(t) {
+  const { list, next, pend, all } = stageInfo(t);
+  let label, color;
+  if (all) { label = 'Concluído'; color = STATUS.concluido.color; }
+  else if (pend >= 0) { label = `Confirmar: ${list[pend].name}`; color = STATUS.em_revisao.color; }
+  else if (next === 0) { label = `A iniciar · ${list[0].name}`; color = STATUS.nao_iniciado.color; }
+  else { label = `${list[next].name}`; color = STATUS.em_andamento.color; }
+  return `<button class="pill editable" data-act="open" style="background:${color}" title="${esc(label)} — ${t.progress}%">${esc(label)}</button>`;
+}
+
+// Decisões que estão esperando por mim (aprovar, confirmar etapa, novo prazo)
+function myDecisions() {
+  const out = [];
+  if (isAdmin()) pendingRequests().forEach((t) => out.push({ t, kind: 'aprovar', label: 'Aprovar solicitação', since: t.created_at }));
+  S.tasks.filter((t) => activeProject(t) && isApproved(t) && hasStages(t) && isTaskManager(t)).forEach((t) => {
+    const { pend, list } = stageInfo(t);
+    if (pend >= 0) out.push({ t, kind: 'etapa', label: `Confirmar etapa "${list[pend].name}"`, since: list[pend].requested_at });
+  });
+  S.dueRequests.filter((r) => r.status === 'pendente').forEach((r) => {
+    const t = task(r.task_id);
+    if (t && activeProject(t) && isTaskManager(t)) out.push({ t, kind: 'prazo', label: `Novo prazo: ${fmtDate(r.old_due) || 'sem prazo'} → ${fmtDate(r.new_due)}`, since: r.created_at });
+  });
+  return out.sort((a, b) => (a.since || '').localeCompare(b.since || ''));
+}
+function waitText(since) {
+  if (!since) return '';
+  const h = (Date.now() - new Date(since).getTime()) / 3600000;
+  return h > 24 ? `<span style="color:var(--danger);font-weight:600">esperando há ${Math.floor(h / 24)} dia(s)</span>` : relTime(since);
+}
+
+// ---------------------------------------------------------------------
+// TELA: Modelos de etapas (só administradores)
+// ---------------------------------------------------------------------
+function viewModels() {
+  if (!isAdmin()) { location.hash = '#/inicio'; return; }
+  setTitle('Modelos de etapas', '#/equipe');
+  document.title = `Modelos de etapas · ${APP_NAME}`;
+  const used = (id) => S.tasks.filter((t) => t.type_id === id).length;
+  const list = [...S.types].sort((a, b) => (b.active - a.active) || (a.position - b.position) || a.name.localeCompare(b.name));
+  $('#view').innerHTML = `
+    <div class="page-head">
+      <div class="t"><h1>Modelos de etapas</h1><p>Cada tipo de atividade tem suas etapas e quanto da atividade fica pronto ao concluir cada uma. Ao criar uma atividade, as etapas do modelo são copiadas para ela e podem ser ajustadas só nela.</p></div>
+      <div class="actions"><button class="btn btn-primary" id="new-type">${ic('plus')} Novo modelo</button></div>
+    </div>
+    <div class="grid-cards">
+      ${list.map((ty) => {
+        const cols = stageColors(ty.color, ty.stages.length);
+        return `<div class="pcard" style="--c:${esc(ty.color)};${ty.active ? '' : 'opacity:.55'}" data-type="${ty.id}">
+          <div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1">${esc(ty.name)}</h3>${ty.active ? '' : '<span class="archived-tag">Inativo</span>'}</div>
+          <div class="stg-bar">${ty.stages.map((x, i) => `<i style="width:${x.pct - (i ? ty.stages[i - 1].pct : 0)}%;background:${cols[i]}"></i>`).join('')}</div>
+          <div class="type-steps">${ty.stages.map((x) => `<span>${esc(x.name)} <b>${x.pct}%</b>${x.confirm ? ' ✔' : ''}</span>`).join('<i>→</i>')}</div>
+          <div class="meta"><span>${used(ty.id)} atividade(s) usando</span></div>
+        </div>`;
+      }).join('')}
+      <div class="pcard" style="--c:#a8adba;cursor:default"><h3>Livre</h3><p>Sem etapas: o progresso é informado manualmente. Bom para coisas rápidas e avulsas.</p></div>
+    </div>
+    <p class="small muted" style="margin-top:14px">✔ = a conclusão dessa etapa precisa ser confirmada por quem passou a atividade.</p>`;
+  $('#new-type').onclick = () => typeModal();
+  $$('[data-type]').forEach((c) => (c.onclick = () => typeModal(typeById(c.dataset.type))));
+}
+
+function typeModal(ty = null) {
+  let color = ty?.color || PROJECT_COLORS[S.types.length % PROJECT_COLORS.length];
+  let editor;
+  openModal({
+    title: ty ? 'Editar modelo' : 'Novo modelo de etapas',
+    body: `
+      <div class="field"><label>Nome do tipo de atividade</label><input class="input" id="ty-name" value="${esc(ty?.name || '')}" placeholder="Ex.: Campo / Montagem" /></div>
+      <div class="field"><label>Cor</label><div style="display:flex;gap:8px;flex-wrap:wrap" id="ty-col">
+        ${PROJECT_COLORS.map((c) => `<button type="button" data-c="${c}" style="width:28px;height:28px;border-radius:8px;border:3px solid ${c === color ? '#1f2430' : 'transparent'};background:${c}"></button>`).join('')}</div></div>
+      <div class="field"><label>Etapas (em ordem)</label><div id="ty-stages"></div></div>
+      ${ty ? `<label class="small" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><input type="checkbox" id="ty-active" ${ty.active ? 'checked' : ''}/> Modelo ativo (aparece ao criar atividades)</label>
+      <p class="small muted" style="margin:0">Alterar o modelo não muda as atividades que já existem: elas guardam a própria cópia das etapas.</p>` : ''}
+      <div class="err" id="ty-err"></div>`,
+    foot: `${ty ? `<button class="btn btn-danger" id="ty-del" style="margin-right:auto">Excluir</button>` : ''}<button class="btn" data-close>Cancelar</button><button class="btn btn-primary" id="ty-save">Salvar modelo</button>`,
+    onMount: ({ el, close }) => {
+      el.querySelector('.modal').style.maxWidth = '640px';
+      editor = stageEditor($('#ty-stages', el), ty?.stages?.length ? ty.stages : [
+        { name: 'Início', pct: 30, confirm: false }, { name: 'Execução', pct: 80, confirm: false }, { name: 'Entrega', pct: 100, confirm: true }], { color });
+      $$('[data-c]', el).forEach((b) => (b.onclick = () => {
+        color = b.dataset.c;
+        $$('[data-c]', el).forEach((x) => (x.style.borderColor = x.dataset.c === color ? '#1f2430' : 'transparent'));
+      }));
+      $('#ty-save', el).onclick = async () => {
+        const name = $('#ty-name', el).value.trim();
+        const stages = editor.get().map(({ name: n, pct, confirm }) => ({ name: n, pct, confirm: !!confirm }));
+        const err = !name ? 'Dê um nome ao modelo.' : validateStages(stages);
+        if (err) { $('#ty-err', el).textContent = err; return; }
+        const fields = { name, color, stages, active: ty ? $('#ty-active', el).checked : true };
+        if (!ty) fields.position = Math.max(0, ...S.types.map((x) => x.position)) + 1;
+        try {
+          const row = ty
+            ? await q(sb.from('activity_types').update(fields).eq('id', ty.id).select().single())
+            : await q(sb.from('activity_types').insert(fields).select().single());
+          upsertLocal(S.types, row);
+          close(); toast('Modelo salvo', 'ok'); viewModels();
+        } catch (e) { $('#ty-err', el).textContent = translateError(e.message); }
+      };
+      $('#ty-del', el)?.addEventListener('click', async () => {
+        const n = S.tasks.filter((t) => t.type_id === ty.id).length;
+        const ok = await confirmDialog(n
+          ? `<b>${n}</b> atividade(s) usam este modelo. Elas continuam com as etapas delas. Excluir mesmo assim? (Dica: você pode só desativar.)`
+          : `Excluir o modelo <b>${esc(ty.name)}</b>?`, { okText: 'Excluir', danger: true, title: 'Excluir modelo' });
+        if (!ok) return;
+        try {
+          await q(sb.from('activity_types').delete().eq('id', ty.id));
+          S.types = S.types.filter((x) => x.id !== ty.id);
+          close(); viewModels();
+        } catch (e) { toastErr(e); }
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------
 // TELA: Início (projetos)
 // ---------------------------------------------------------------------
 function viewHome() {
@@ -1038,7 +1308,7 @@ function viewHome() {
     const ts = S.tasks.filter((t) => t.project_id === p.id && isApproved(t));
     const pendN = S.tasks.filter((t) => t.project_id === p.id && approvalOf(t) === 'pendente').length;
     const total = ts.length;
-    const avg = total ? Math.round(ts.reduce((s, t) => s + t.progress, 0) / total) : 0;
+    const avg = weightedProgress(ts);
     const pl = ts.filter((t) => dueState(t) === 'late').length;
     const ps = ts.filter((t) => dueState(t) === 'soon').length;
     const people = [...new Set(ts.map((t) => t.assignee_id).filter(Boolean))].map(member).filter(Boolean);
@@ -1068,11 +1338,11 @@ function viewHome() {
       <div class="actions">${isAdmin() ? `<button class="btn btn-primary" id="new-proj">${ic('plus')} Novo projeto</button>` : ''}</div>
     </div>
     ${isAdmin() && backupDue() ? `<div class="alert warn">${ic('archive')}<div style="flex:1"><b>Faça um backup dos dados</b>${lastBackupText()}. Leva 2 segundos e protege a equipe caso algo dê errado.</div><button class="btn btn-sm" id="home-backup">Baixar backup</button></div>` : ''}
-    ${isAdmin() && pendingRequests().length ? `<div class="alert warn" style="display:block">
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">${ic('clock')}<b>${pendingRequests().length} solicitaç${pendingRequests().length > 1 ? 'ões' : 'ão'} de atividade aguardando aprovação</b></div>
-      ${pendingRequests().slice(0, 6).map((t) => `<div class="notif" data-req="${t.id}" style="padding:7px 8px;background:rgba(255,255,255,.6);margin-top:4px">
-        <span class="dot" style="background:var(--warn)"></span><div><b>${esc(t.title)}</b><span>${esc(memberByEmail(t.requested_by_email)?.name || t.requested_by_email || '')} · ${esc(project(t.project_id)?.name || '')} · ${relTime(t.created_at)}</span></div></div>`).join('')}
-    </div>` : ''}
+    ${(() => { const dec = myDecisions(); return dec.length ? `<div class="alert warn" style="display:block">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">${ic('clock')}<b>${dec.length} ${dec.length > 1 ? 'itens' : 'item'} para você decidir</b></div>
+      ${dec.slice(0, 8).map((d) => `<div class="notif" data-req="${d.t.id}" style="padding:7px 8px;background:rgba(255,255,255,.6);margin-top:4px">
+        <span class="dot" style="background:var(--warn)"></span><div><b>${esc(d.label)}</b><span>${esc(d.t.title)} · ${esc(project(d.t.project_id)?.name || '')} · ${waitText(d.since)}</span></div></div>`).join('')}
+    </div>` : ''; })()}
     <div class="stats">
       <div class="stat" data-go="#/minhas"><div class="k"><i style="background:var(--primary)"></i>Minhas em aberto</div><div class="v">${open.length}</div></div>
       <div class="stat warn" data-go="#/minhas"><div class="k"><i style="background:var(--warn)"></i>Vencendo (${DUE_SOON_DAYS} dias)</div><div class="v">${soon.length}</div></div>
@@ -1177,7 +1447,7 @@ function viewProject(id, isRefresh) {
   else if (ui.st) ts = ts.filter((t) => t.status === ui.st);
   ts.sort(sortByDue);
 
-  const avg = total ? Math.round(allTs.filter(isApproved).reduce((s, t) => s + t.progress, 0) / total) : 0;
+  const avg = weightedProgress(allTs.filter(isApproved));
 
   let body = '';
   if (!total && !reqGroups.length) {
@@ -1332,19 +1602,6 @@ function mountSubtasks(el, t, canEd) {
   const box = $('#subs-box', el);
   if (!box) return;
   const members = S.members.filter((m) => m.active);
-  const syncProgress = async () => {
-    const list = subsOf(t.id);
-    if (!list.length || !canEditTask(t) || !isApproved(t)) return;
-    const pct = Math.round((list.filter((x) => x.done).length / list.length) * 100);
-    const cur = task(t.id) || t;
-    if (pct !== cur.progress) {
-      await updateTask(t.id, { progress: pct });
-    }
-    Object.assign(t, task(t.id) || {});
-    const r = $('#t-prog', el), st = $('#t-status', el);
-    if (r) { r.value = t.progress; $('#t-progv', el).textContent = t.progress + '%'; }
-    if (st) st.value = t.status;
-  };
   const render = () => {
     const list = subsOf(t.id);
     const done = list.filter((x) => x.done).length;
@@ -1391,7 +1648,6 @@ function mountSubtasks(el, t, canEd) {
         row.classList.toggle('done', d);
         await save({ done: d, done_at: d ? new Date().toISOString() : null });
         render(); refresh();
-        await syncProgress();
       });
       $('.sub-title', row)?.addEventListener('change', (e) => { const v = e.target.value.trim(); if (v) save({ title: v }); else e.target.value = x.title; });
       $('.sub-title', row)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
@@ -1402,8 +1658,7 @@ function mountSubtasks(el, t, canEd) {
           await q(sb.from('subtasks').delete().eq('id', x.id));
           S.subtasks = S.subtasks.filter((s) => s.id !== x.id);
           render(); refresh();
-          await syncProgress();
-        } catch (e) { toastErr(e); }
+          } catch (e) { toastErr(e); }
       });
     });
     const inp = $('#sub-new', box);
@@ -1418,7 +1673,6 @@ function mountSubtasks(el, t, canEd) {
         const r = await q(sb.from('subtasks').insert({ task_id: t.id, title, position: pos }).select().single());
         upsertLocal(S.subtasks, r);
         render(); refresh();
-        await syncProgress();
         $('#sub-new', box)?.focus();
       } catch (ex) { toastErr(ex); inp.disabled = false; }
     });
@@ -1427,34 +1681,43 @@ function mountSubtasks(el, t, canEd) {
   S.onSubsChanged = () => { if (!box.contains(document.activeElement)) render(); };
 }
 
-// Atualização rápida do dia: o que fez, o que falta e o progresso
+// Atualização rápida do dia: o que fez, o que falta e o avanço
 function dailyUpdate(t) {
+  const staged = hasStages(t);
+  const { list, next } = stageInfo(t);
+  const nx = staged && next >= 0 ? list[next] : null;
+  const mgr = isApproved(t) ? isTaskManager(t) : isAdmin();
+  const stageLabel = nx ? (nx.confirm && !mgr ? `Terminei a etapa "${esc(nx.name)}" (pedir confirmação a quem passou)` : `Concluí a etapa "${esc(nx.name)}" (${nx.pct}%)`) : '';
   openModal({
     title: 'Atualização do dia',
-    body: `<p class="muted small" style="margin:0 0 12px">${esc(t.title)}</p>
+    body: `<p class="muted small" style="margin:0 0 12px">${esc(t.title)}${staged && nx ? ` · etapa atual: <b>${esc(nx.name)}</b>` : ''}</p>
       <div class="field"><label>✅ O que foi feito</label><textarea class="textarea" id="du-done" rows="3" placeholder="Ex.: terminei o cálculo das sapatas S1 a S6"></textarea></div>
       <div class="field"><label>⏳ O que falta fazer</label><textarea class="textarea" id="du-todo" rows="3" placeholder="Ex.: falta a revisão e as pranchas de detalhamento"></textarea></div>
-      <div class="field"><label>Progresso</label>
-        <div class="range-row"><input type="range" id="du-prog" min="0" max="100" step="5" value="${t.progress}" /><b id="du-progv">${t.progress}%</b></div></div>`,
+      ${staged ? (nx ? `<label class="du-stage"><input type="checkbox" id="du-stage" /> ${stageLabel}</label>` : '')
+        : `<div class="field"><label>Progresso</label>
+        <div class="range-row"><input type="range" id="du-prog" min="0" max="100" step="5" value="${t.progress}" /><b id="du-progv">${t.progress}%</b></div></div>`}`,
     foot: `<button class="btn" data-close>Cancelar</button><button class="btn btn-primary" id="du-save">Salvar atualização</button>`,
     onMount: ({ el, close }) => {
       const r = $('#du-prog', el);
-      r.oninput = () => ($('#du-progv', el).textContent = r.value + '%');
+      if (r) r.oninput = () => ($('#du-progv', el).textContent = r.value + '%');
       setTimeout(() => $('#du-done', el).focus(), 50);
       $('#du-save', el).onclick = async () => {
         const done = $('#du-done', el).value.trim();
         const todo = $('#du-todo', el).value.trim();
-        const prog = Number(r.value);
-        if (!done && !todo && prog === t.progress) { toast('Escreva o que foi feito ou o que falta', 'error'); return; }
+        const prog = r ? Number(r.value) : t.progress;
+        const stageDone = $('#du-stage', el)?.checked;
+        if (!done && !todo && prog === t.progress && !stageDone) { toast('Escreva o que foi feito ou o que falta', 'error'); return; }
         $('#du-save', el).disabled = true;
         try {
           const parts = [];
           if (done) parts.push(`✅ Feito: ${done}`);
           if (todo) parts.push(`⏳ Falta: ${todo}`);
-          if (prog !== t.progress) parts.push(`📊 Progresso: ${t.progress}% → ${prog}%`);
-          await q(sb.from('task_comments').insert({ task_id: t.id, body: parts.join('\n'), author_email: S.me.email }));
+          if (!staged && prog !== t.progress) parts.push(`📊 Progresso: ${t.progress}% → ${prog}%`);
+          if (stageDone && nx) parts.push(nx.confirm && !mgr ? `🏁 Etapa "${nx.name}" terminada — aguardando confirmação` : `🏁 Etapa "${nx.name}" concluída (${nx.pct}%)`);
+          if (parts.length) await q(sb.from('task_comments').insert({ task_id: t.id, body: parts.join('\n'), author_email: S.me.email }));
           close();
-          if (prog !== t.progress) await updateTask(t.id, { progress: prog });
+          if (stageDone && nx) await stageAction(t, next, nx.confirm && !mgr ? 'request' : 'done');
+          else if (!staged && prog !== t.progress) await updateTask(t.id, { progress: prog });
           await reloadLastUpdates();
           refresh();
           toast('Atualização registrada', 'ok');
@@ -1464,21 +1727,41 @@ function dailyUpdate(t) {
   });
 }
 
+// Ações nas etapas: concluir, pedir confirmação, confirmar, devolver, desfazer
+async function stageAction(t, idx, action) {
+  const cur = task(t.id) || t;
+  const list = (cur.stages || []).map((x) => ({ ...x }));
+  const s = list[idx];
+  if (!s) return;
+  const now = new Date().toISOString();
+  if (action === 'done') { s.done_at = now; s.done_by = S.me.email; }
+  else if (action === 'request') { s.requested_at = now; s.requested_by = S.me.email; }
+  else if (action === 'return' || action === 'cancel') { delete s.requested_at; delete s.requested_by; }
+  else if (action === 'undo') { delete s.done_at; delete s.done_by; delete s.requested_at; delete s.requested_by; }
+  await updateTask(t.id, { stages: list });
+}
+
 async function openTask(id, defaults = {}) {
   const isNew = !id;
+  const firstType = activeTypes()[0];
   const t = isNew
-    ? { title: '', description: '', assignee_id: null, due_date: null, status: 'nao_iniciado', progress: 0, priority: 'media', approval: isAdmin() ? 'aprovada' : 'pendente', ...defaults }
+    ? { title: '', description: '', assignee_id: null, due_date: null, status: 'nao_iniciado', progress: 0, priority: 'media', size: 'M',
+        approval: isAdmin() ? 'aprovada' : 'pendente', type_id: firstType?.id || null, stages: firstType ? copyStages(firstType) : null,
+        suggested_due_date: null, origin: '', started_early: false, hold: '', hold_note: '', ...defaults }
     : task(id);
   if (!t) { toast('Atividade não encontrada'); return; }
   const adm = isAdmin();
   const approval = approvalOf(t);
   const pending = approval !== 'aprovada';
   const isRequest = isNew && !adm;                         // colaborador criando uma solicitação
-  const canText = isNew || isTaskManager(t);                // nome e descrição
-  const canPlan = isNew ? adm : canPlanTask(t);             // prazo, prioridade, responsável, projeto
-  const canEd = isNew || canEditTask(t);                    // status, progresso, atualizações
+  const mgr = isNew ? adm : isTaskManager(t);
+  const canText = isNew || mgr;                             // nome e descrição
+  const canPlan = isNew ? adm : canPlanTask(t);             // prazo, prioridade, responsável, tamanho, projeto
+  const canEd = isNew || canEditTask(t);                    // etapas, status, progresso, impedimento, atualizações
+  const canStructure = isNew || (pending ? (adm || mgr) : mgr);   // tipo e etapas
   const canReview = !isNew && pending && adm;               // aprovar / recusar
-  const canDelete = !isNew && isTaskManager(t);
+  const canDelete = !isNew && mgr;
+  const stageMgr = isNew ? adm : (isApproved(t) ? mgr : adm);   // quem confirma etapas finais
   const creator = memberByEmail(t.created_by_email);
   const creatorName = creator ? creator.name : (t.created_by_email || 'administrador');
   const requester = memberByEmail(t.requested_by_email);
@@ -1488,20 +1771,23 @@ async function openTask(id, defaults = {}) {
     .map((m) => `<option value="${m.id}" ${m.id === t.assignee_id ? 'selected' : ''}>${esc(m.name)}${m.job_title ? ' — ' + esc(m.job_title) : ''}</option>`).join('');
   const projOpts = S.projects.filter((x) => !x.archived || x.id === t.project_id)
     .map((x) => `<option value="${x.id}" ${x.id === t.project_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const typeOpts = () => `${activeTypes().concat(t.type_id && !activeTypes().some((x) => x.id === t.type_id) && typeById(t.type_id) ? [typeById(t.type_id)] : [])
+    .map((x) => `<option value="${x.id}" ${x.id === t.type_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+    <option value="" ${!t.type_id && !hasStages(t) ? 'selected' : ''}>Livre (sem etapas, progresso manual)</option>`;
   const D = (ok) => (ok ? '' : 'disabled');
   const lockIc = ic('lock').replace('<svg', '<svg width="13" height="13" style="vertical-align:-2px"');
 
   let note = '';
   if (isRequest) {
-    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Descreva a atividade. Um administrador aprova e define o prazo de entrega e a prioridade.</div></div>`;
+    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Informe o que foi combinado e o prazo sugerido. Um administrador aprova, confirma o prazo e a prioridade.</div></div>`;
   } else if (!isNew && approval === 'pendente') {
     note = adm
-      ? `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Solicitação de ${esc(requester?.name || t.requested_by_email || '')}</b>Enviada ${relTime(t.created_at)}. Defina a <b>data de entrega</b> e a <b>prioridade</b> e clique em Aprovar.</div></div>`
-      : `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Aguardando aprovação</b>Um administrador vai aprovar e definir o prazo e a prioridade. Enquanto isso você pode ajustar o nome e a descrição.</div></div>`;
+      ? `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Solicitação de ${esc(requester?.name || t.requested_by_email || '')}</b>Enviada ${relTime(t.created_at)}${t.suggested_due_date ? ` · prazo combinado: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}${t.started_early ? ' · <b>já iniciada</b>' : ''}. Confira as etapas, defina a <b>data de entrega</b> e a <b>prioridade</b> e clique em Aprovar.</div></div>`
+      : `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Aguardando aprovação</b>Um administrador vai confirmar o prazo e a prioridade. Enquanto isso você pode ajustar o nome, a descrição e as etapas.</div></div>`;
   } else if (!isNew && approval === 'recusada') {
     note = `<div class="alert danger" style="margin-bottom:14px">${ic('alert')}<div><b>Solicitação recusada</b>${t.review_note ? esc(t.review_note) : 'Sem motivo informado.'}</div></div>`;
-  } else if (!isNew && !isTaskManager(t) && canEd) {
-    note = `<div class="readonly-note">Atividade passada por <b>${esc(creatorName)}</b>. Você é o responsável: atualize o <b>status</b>, o <b>progresso</b> e escreva as atualizações. Prazo e prioridade são definidos por ${esc(firstName(creatorName))}.</div>`;
+  } else if (!isNew && !mgr && canEd) {
+    note = `<div class="readonly-note">Atividade passada por <b>${esc(creatorName)}</b>. Você é o responsável: avance as etapas e registre as atualizações. Prazo e prioridade são de ${esc(firstName(creatorName))}; se precisar, peça novo prazo.</div>`;
   } else if (!isNew && !canEd) {
     note = `<div class="readonly-note">${lockIc} Atividade passada por <b>${esc(creatorName)}</b>${assignee ? ` para <b>${esc(assignee.name)}</b>` : ''}. Somente ${assignee ? 'os dois podem' : 'quem passou pode'} alterar ou comentar.</div>`;
   }
@@ -1513,24 +1799,38 @@ async function openTask(id, defaults = {}) {
       <button class="btn btn-ghost btn-icon" data-close title="Fechar">${ic('x')}</button>
     </div>
     <div class="drawer-body">
-      <input class="title-input" id="t-title" placeholder="${isRequest ? 'O que você vai fazer?' : 'Nome da atividade'}" value="${esc(t.title)}" ${D(canText)} />
+      <input class="title-input" id="t-title" placeholder="${isRequest ? 'O que precisa ser feito?' : 'Nome da atividade'}" value="${esc(t.title)}" ${D(canText)} />
       ${note}
-      ${isRequest ? '' : `<div class="kv">
-        <label>Status</label>
-        <select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>
-        <label>Progresso</label>
-        <div class="range-row"><input type="range" id="t-prog" min="0" max="100" step="5" value="${t.progress}" ${D(canEd)} /><b id="t-progv">${t.progress}%</b></div>
-        <label>Responsável</label>
-        <select class="select" id="t-who" ${D(canPlan)}><option value="">— Sem responsável —</option>${memberOpts}</select>
-        <label>Data de entrega${canReview ? ' *' : ''}</label>
-        <input class="input" type="date" id="t-due" value="${t.due_date || ''}" ${D(canPlan)} />
+      <div class="section-t" style="margin-top:4px">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Tipo e etapas</div>
+      <div class="kv" style="margin-bottom:10px"><label>Tipo de atividade</label>
+        <select class="select" id="t-type" ${D(canStructure)}>${typeOpts()}</select></div>
+      <div id="stage-box"></div>
+      <div class="kv" style="margin-top:14px">
+        ${isRequest ? '' : `
+        <label>Status</label><div id="status-cell"></div>
+        <label>Progresso</label><div id="prog-cell"></div>`}
+        ${isRequest ? '' : `<label>Responsável</label>
+        <select class="select" id="t-who" ${D(canPlan)}><option value="">— Sem responsável —</option>${memberOpts}</select>`}
+        ${isNew && isRequest ? `<label>Prazo combinado</label><input class="input" type="date" id="t-sdue" value="${t.suggested_due_date || ''}" />` : ''}
+        ${isRequest ? '' : `<label>Data de entrega${canReview ? ' *' : ''}</label>
+        <div><input class="input" type="date" id="t-due" value="${t.due_date || (canReview ? t.suggested_due_date || '' : '')}" ${D(canPlan)} />
+          ${t.suggested_due_date && !isNew ? `<div class="small muted" style="margin-top:4px">Prazo combinado/sugerido: <b>${fmtDate(t.suggested_due_date, true)}</b>${requester ? ` (por ${esc(firstName(requester.name))})` : ''}</div>` : ''}
+          <div id="due-req-box"></div></div>
         <label>Prioridade</label>
         <select class="select" id="t-prio" ${D(canPlan)}>${Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${t.priority === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
+        <label>Tamanho</label>
+        <select class="select" id="t-size" ${D(canPlan)} title="Peso da atividade no progresso do projeto">${Object.entries(SIZES).map(([k, v]) => `<option value="${k}" ${(t.size || 'M') === k ? 'selected' : ''}>${v.label} (peso ${v.w})</option>`).join('')}</select>`}
         ${canPlan ? `<label>Projeto</label><select class="select" id="t-proj">${projOpts}</select>` : ''}
+        ${isNew ? '' : `<label>Impedimento</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap"><select class="select" id="t-hold" ${D(canEd)} style="flex:1;min-width:160px">${Object.entries(HOLDS).map(([k, v]) => `<option value="${k}" ${(t.hold || '') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+          <input class="input" id="t-holdn" placeholder="Detalhe (ex.: cliente vai enviar as cotas)" value="${esc(t.hold_note || '')}" ${D(canEd)} style="flex:2;min-width:180px;${t.hold ? '' : 'display:none'}" /></div>`}
         ${!isNew && !pending ? `<label>Passada por</label><div class="person">${avatar(creator || { name: creatorName, email: t.created_by_email || '' })}<span>${esc(creatorName)}${requester ? ` <span class="muted small">(pedida por ${esc(firstName(requester.name))})</span>` : ''}</span></div>` : ''}
-      </div>`}
+      </div>
+      ${isRequest || (pending && !isNew && t.requested_by_email === S.me.email) ? `<label class="du-stage" style="margin-bottom:12px"><input type="checkbox" id="t-early" ${t.started_early ? 'checked' : ''} /> Já iniciei (o serviço não pode esperar a aprovação)</label>` : ''}
+      <div class="field"><label>${isRequest ? 'Origem / o que foi combinado' : 'Origem / onde foi combinado'}</label>
+        <textarea class="textarea" id="t-origin" rows="2" placeholder="Ex.: Reunião com o cliente em 24/11 — presentes: João (cliente), Mateus" ${D(isNew || adm)}>${esc(t.origin || '')}</textarea></div>
       <div class="field"><label>Descrição / escopo</label>
-        <textarea class="textarea" id="t-desc" rows="5" placeholder="${canText ? 'Detalhes, normas, documentos de referência...' : ''}" ${D(canText)}>${esc(t.description || '')}</textarea></div>
+        <textarea class="textarea" id="t-desc" rows="4" placeholder="${canText ? 'Detalhes, normas, documentos de referência...' : ''}" ${D(canText)}>${esc(t.description || '')}</textarea></div>
       ${isNew ? '' : `<div id="subs-box"></div>`}
       ${isNew ? '' : `
         <div class="section-t">${ic('msg').replace('<svg', '<svg width="16" height="16"')} Atualizações e comentários</div>
@@ -1538,7 +1838,8 @@ async function openTask(id, defaults = {}) {
           <textarea class="textarea" id="c-body" placeholder="O que foi feito hoje e o que falta fazer... (Ctrl+Enter envia)"></textarea>
           <button class="btn btn-primary btn-icon" id="c-send" title="Enviar">${ic('send')}</button>
         </div>` : ''}
-        <div class="comments" id="comments"><div class="muted small">Carregando...</div></div>`}
+        <div class="comments" id="comments"><div class="muted small">Carregando...</div></div>
+        <details class="hist" id="hist"><summary>${ic('clock').replace('<svg', '<svg width="15" height="15"')} Histórico de alterações</summary><div id="hist-list" class="muted small">Carregando...</div></details>`}
     </div>
     ${canEd || canReview ? `<div class="drawer-foot">
       ${canReview && approval === 'pendente' ? `<button class="btn btn-danger" id="t-reject">Recusar</button>` : ''}
@@ -1551,62 +1852,241 @@ async function openTask(id, defaults = {}) {
   openModal({
     drawer: true,
     body,
-    onClose: () => { S.onCommentsChanged = null; S.onSubsChanged = null; },
+    onClose: () => { S.onCommentsChanged = null; S.onSubsChanged = null; S.onTaskChanged = null; S.onDueChanged = null; },
     onMount: ({ el, close }) => {
       if (!isNew) mountSubtasks(el, t, canEd);
-      const prog = $('#t-prog', el);
-      const st = $('#t-status', el);
-      if (prog && st) {
-        prog.oninput = () => {
-          $('#t-progv', el).textContent = prog.value + '%';
-          const v = Number(prog.value);
-          if (v === 100) st.value = 'concluido';
-          else if (v > 0 && st.value === 'nao_iniciado') st.value = 'em_andamento';
-          else if (v < 100 && st.value === 'concluido') st.value = 'em_andamento';
-        };
-        st.onchange = () => { if (st.value === 'concluido') { prog.value = 100; $('#t-progv', el).textContent = '100%'; } };
-      }
+      // ---------- estado das etapas no painel ----------
+      let draftStages = hasStages(t) ? t.stages.map((x) => ({ ...x })) : null;   // etapas em edição (nova/estrutura)
+      let editing = isNew;                                                         // editor aberto direto só ao criar
+      let editor = null;
+      const live = () => (isNew ? t : task(t.id) || t);
+      const typeSel = $('#t-type', el);
+      const renderStatusProg = () => {
+        const cur = live();
+        const sc = $('#status-cell', el), pc = $('#prog-cell', el);
+        if (!sc) return;
+        const staged = editing ? !!(draftStages && draftStages.length) : hasStages(cur);
+        if (staged) {
+          sc.innerHTML = `<div class="small muted">Definido pelas etapas · <b style="color:var(--text)">${(STATUS[cur.status] || STATUS.nao_iniciado).label}</b></div>`;
+          pc.innerHTML = `<div class="range-row"><div class="prog" style="flex:1"><div class="bar"><i class="${cur.progress >= 100 ? 'full' : ''}" style="width:${cur.progress}%"></i></div></div><b>${cur.progress}%</b></div>
+            <div class="small muted">Calculado pela última etapa concluída</div>`;
+        } else {
+          sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>`;
+          pc.innerHTML = `<div class="range-row"><input type="range" id="t-prog" min="0" max="100" step="5" value="${cur.progress}" ${D(canEd)} /><b id="t-progv">${cur.progress}%</b></div>`;
+          const prog = $('#t-prog', el), st = $('#t-status', el);
+          prog.oninput = () => {
+            $('#t-progv', el).textContent = prog.value + '%';
+            const v = Number(prog.value);
+            if (v === 100) st.value = 'concluido';
+            else if (v > 0 && st.value === 'nao_iniciado') st.value = 'em_andamento';
+            else if (v < 100 && st.value === 'concluido') st.value = 'em_andamento';
+          };
+          st.onchange = () => { if (st.value === 'concluido') { prog.value = 100; $('#t-progv', el).textContent = '100%'; } };
+        }
+      };
+      const renderStages = () => {
+        const box = $('#stage-box', el);
+        const cur = live();
+        const ty = typeById(typeSel.value);
+        if (editing) {
+          if (!draftStages || !draftStages.length) {
+            box.innerHTML = `<div class="small muted" style="margin-bottom:6px">Sem etapas: o progresso é informado manualmente.${canStructure ? ' Escolha um tipo acima ou ' : ''}</div>
+              ${canStructure ? `<button type="button" class="btn btn-sm" id="stg-addfirst">${ic('plus')} Criar etapas só para esta atividade</button>` : ''}`;
+            $('#stg-addfirst', box)?.addEventListener('click', () => { draftStages = [{ name: '', pct: 100, confirm: true }]; renderStages(); renderStatusProg(); });
+            editor = null;
+          } else {
+            box.innerHTML = `<div class="small muted" style="margin-bottom:8px">${isNew ? 'Etapas copiadas do modelo. Tire as que não se aplicam ou inclua alguma só para esta atividade.' : 'Ajuste as etapas desta atividade (o modelo não é alterado).'}</div><div id="stg-ed"></div>
+              ${!isNew ? `<div style="display:flex;gap:8px;margin-top:8px"><button type="button" class="btn btn-sm" id="stg-cancel">Cancelar edição</button><button type="button" class="btn btn-sm btn-primary" id="stg-apply">Salvar etapas</button></div>` : ''}`;
+            editor = stageEditor($('#stg-ed', box), draftStages, { color: ty?.color || '#1d4ed8', onChange: (l) => { draftStages = l; } });
+            $('#stg-cancel', box)?.addEventListener('click', () => { editing = false; draftStages = hasStages(live()) ? live().stages.map((x) => ({ ...x })) : null; typeSel.value = live().type_id || ''; renderStages(); renderStatusProg(); });
+            $('#stg-apply', box)?.addEventListener('click', async () => {
+              const list = editor.get();
+              const err = validateStages(list);
+              if (err) { toast(err, 'error'); return; }
+              const old = live().stages || [];
+              const merged = list.map((x) => { const o = old.find((y) => y.name === x.name); return o ? { ...o, name: x.name, pct: x.pct, confirm: !!x.confirm } : { name: x.name, pct: x.pct, confirm: !!x.confirm }; });
+              await updateTask(t.id, { stages: merged, type_id: typeSel.value || null });
+              editing = pending && canStructure;
+              draftStages = hasStages(live()) ? live().stages.map((x) => ({ ...x })) : null;
+              renderStages(); renderStatusProg();
+              toast('Etapas atualizadas', 'ok');
+            });
+          }
+          return;
+        }
+        // visualização + ações
+        if (!hasStages(cur)) {
+          box.innerHTML = `<div class="small muted">Sem etapas: o progresso é informado manualmente.</div>
+            ${canStructure ? `<button type="button" class="btn btn-sm" id="stg-edit" style="margin-top:6px">${ic('plus')} Definir etapas</button>` : ''}`;
+        } else {
+          const { list, next, pend, all, done } = stageInfo(cur);
+          const nx = next >= 0 ? list[next] : null;
+          const prevDone = done > 0 ? list[done - 1] : null;
+          let actions = '';
+          if (all) {
+            actions = `<div class="stage-msg ok">${ic('ok')} Todas as etapas concluídas.</div>`;
+          } else if (pend >= 0) {
+            const who = memberByEmail(list[pend].requested_by)?.name || list[pend].requested_by || '';
+            actions = stageMgr
+              ? `<div class="stage-msg">${esc(who)} terminou <b>${esc(list[pend].name)}</b> e pediu sua confirmação ${relTime(list[pend].requested_at)}.</div>
+                 <div class="stage-btns"><button type="button" class="btn btn-primary" data-sa="done" data-i="${pend}">${ic('ok')} Confirmar conclusão</button><button type="button" class="btn" data-sa="return" data-i="${pend}">Devolver para ajustes</button></div>`
+              : `<div class="stage-msg">Aguardando ${esc(firstName(creatorName))} confirmar <b>${esc(list[pend].name)}</b>.</div>
+                 ${canEd ? `<div class="stage-btns"><button type="button" class="btn btn-sm" data-sa="cancel" data-i="${pend}">Cancelar pedido</button></div>` : ''}`;
+          } else if (canEd && nx) {
+            const needConfirm = nx.confirm && !stageMgr;
+            actions = `<div class="stage-btns"><button type="button" class="btn btn-primary" data-sa="${needConfirm ? 'request' : 'done'}" data-i="${next}">${ic('ok')} ${needConfirm ? `Terminei "${esc(nx.name)}" — pedir confirmação` : `Concluir etapa "${esc(nx.name)}"`}</button></div>
+              ${pending ? `<div class="small muted" style="margin-top:6px">A atividade ainda não foi aprovada; o avanço só conta no projeto depois da aprovação.</div>` : ''}`;
+          }
+          const canUndo = prevDone && pend < 0 && (stageMgr || (canEd && !prevDone.confirm));
+          box.innerHTML = `${stepperHtml(cur)}${actions}
+            <div class="stage-links">
+              ${canUndo ? `<button type="button" class="linkbtn" data-sa="undo" data-i="${done - 1}">Desfazer "${esc(prevDone.name)}"</button>` : ''}
+              ${canStructure ? `<button type="button" class="linkbtn" id="stg-edit">Editar etapas desta atividade</button>` : ''}
+            </div>`;
+          $$('[data-sa]', box).forEach((b) => (b.onclick = async () => {
+            const act = b.dataset.sa, i = Number(b.dataset.i);
+            if (act === 'return') {
+              const reason = await promptText('Devolver etapa', `O que precisa ser ajustado em "${list[i].name}"?`);
+              if (reason === null) return;
+              if (reason) await q(sb.from('task_comments').insert({ task_id: t.id, body: `↩️ Etapa "${list[i].name}" devolvida: ${reason}`, author_email: S.me.email })).catch(toastErr);
+            }
+            b.disabled = true;
+            await stageAction(t, i, act);
+            renderStages(); renderStatusProg();
+          }));
+        }
+        $('#stg-edit', box)?.addEventListener('click', () => { editing = true; draftStages = hasStages(cur) ? cur.stages.map((x) => ({ ...x })) : []; renderStages(); renderStatusProg(); });
+      };
+      typeSel.onchange = () => {
+        const ty = typeById(typeSel.value);
+        draftStages = ty ? copyStages(ty) : null;
+        editing = true;
+        renderStages(); renderStatusProg();
+      };
+      renderStages();
+      renderStatusProg();
+      S.onTaskChanged = () => { if (!editing && !el.querySelector('.stage-box-busy')) { renderStages(); renderStatusProg(); } };
+
+      // ---------- impedimento ----------
+      const holdSel = $('#t-hold', el);
+      if (holdSel) holdSel.onchange = () => { $('#t-holdn', el).style.display = holdSel.value ? '' : 'none'; };
+
+      // ---------- pedido de novo prazo ----------
+      const renderDueReq = () => {
+        const box = $('#due-req-box', el);
+        if (!box || isNew) return;
+        const req = S.dueRequests.find((r) => r.task_id === t.id && r.status === 'pendente');
+        const last = S.dueRequests.filter((r) => r.task_id === t.id && r.status !== 'pendente')[0];
+        if (req) {
+          const who = memberByEmail(req.requested_by_email)?.name || req.requested_by_email;
+          box.innerHTML = `<div class="due-req">📅 <b>${esc(firstName(who))}</b> pediu novo prazo: ${fmtDate(req.old_due, true) || 'sem prazo'} → <b>${fmtDate(req.new_due, true)}</b>${req.reason ? `<br><span class="muted">"${esc(req.reason)}"</span>` : ''}
+            <div class="stage-btns">${mgr ? `<button type="button" class="btn btn-sm btn-primary" data-dr="aprovado">Aprovar novo prazo</button><button type="button" class="btn btn-sm" data-dr="recusado">Recusar</button>`
+              : req.requested_by_email === S.me.email ? `<button type="button" class="btn btn-sm" data-dr="cancelar">Cancelar pedido</button>` : ''}</div></div>`;
+          $$('[data-dr]', box).forEach((b) => (b.onclick = async () => {
+            try {
+              if (b.dataset.dr === 'cancelar') { await q(sb.from('due_requests').delete().eq('id', req.id)); S.dueRequests = S.dueRequests.filter((r) => r.id !== req.id); }
+              else {
+                let noteTxt = '';
+                if (b.dataset.dr === 'recusado') { noteTxt = await promptText('Recusar novo prazo', 'Motivo (aparece para quem pediu):'); if (noteTxt === null) return; }
+                const row = await q(sb.from('due_requests').update({ status: b.dataset.dr, decision_note: noteTxt || '' }).eq('id', req.id).select().single());
+                upsertLocal(S.dueRequests, row);
+                if (b.dataset.dr === 'aprovado') { const tr = await q(sb.from('tasks').select('*').eq('id', t.id).single()); upsertLocal(S.tasks, tr); $('#t-due', el).value = tr.due_date || ''; }
+              }
+              renderDueReq(); refresh(); loadHist();
+            } catch (e) { toastErr(e); }
+          }));
+        } else if (canEd && !mgr && isApproved(t)) {
+          box.innerHTML = `${last ? `<div class="small muted" style="margin-top:4px">Último pedido: ${fmtDate(last.new_due, true)} — ${last.status === 'aprovado' ? 'aprovado' : 'recusado'}${last.decision_note ? ` (${esc(last.decision_note)})` : ''}</div>` : ''}
+            <button type="button" class="linkbtn" id="ask-due" style="margin-top:4px">Pedir novo prazo</button>`;
+          $('#ask-due', box).onclick = () => askNewDue(t, () => { renderDueReq(); loadHist(); refresh(); });
+        } else box.innerHTML = '';
+      };
+      renderDueReq();
+      S.onDueChanged = renderDueReq;
+
+      // ---------- histórico ----------
+      const loadHist = async () => {
+        const hb = $('#hist-list', el);
+        if (!hb || !$('#hist', el).open) return;
+        try {
+          const rows = await q(sb.from('task_history').select('*').eq('task_id', t.id).order('created_at', { ascending: false }).limit(100));
+          hb.innerHTML = rows.length ? rows.map((h) => `<div class="hist-row"><b>${esc(firstName(memberByEmail(h.actor_email)?.name || h.actor_email || 'Sistema'))}</b> ${esc(h.action)} <span>${new Date(h.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span></div>`).join('')
+            : 'Sem registros ainda.';
+        } catch { hb.textContent = 'Histórico indisponível.'; }
+      };
+      $('#hist', el)?.addEventListener('toggle', loadHist);
+
       if (isNew) setTimeout(() => $('#t-title', el).focus(), 50);
 
+      // ---------- salvar ----------
       const collect = () => {
         const v = { title: $('#t-title', el).value.trim(), description: $('#t-desc', el).value.trim() };
-        if (st) { v.status = st.value; v.progress = Number(prog.value); }
+        const st = $('#t-status', el), pr = $('#t-prog', el);
+        if (st && pr) { v.status = st.value; v.progress = Number(pr.value); }
         if ($('#t-who', el)) {
           v.assignee_id = $('#t-who', el).value || null;
           v.due_date = $('#t-due', el).value || null;
           v.priority = $('#t-prio', el).value;
+          v.size = $('#t-size', el).value;
         }
         if ($('#t-proj', el)) v.project_id = $('#t-proj', el).value;
+        if (holdSel) { v.hold = holdSel.value; v.hold_note = holdSel.value ? $('#t-holdn', el).value.trim() : ''; }
+        if ($('#t-early', el)) v.started_early = $('#t-early', el).checked;
+        v.origin = $('#t-origin', el).value.trim();
+        if (editing) {
+          const list = editor ? editor.get() : (draftStages || []);
+          v.stages = list.length ? list : null;
+          v.type_id = typeSel.value || null;
+        }
         return v;
       };
       const buildPatch = (vals) => {
         const keys = [];
         if (canText) keys.push('title', 'description');
-        if (canEd) keys.push('status', 'progress');
-        if (canPlan) keys.push('assignee_id', 'due_date', 'priority', 'project_id');
+        if (canEd) keys.push('status', 'progress', 'hold', 'hold_note');
+        if (canPlan) keys.push('assignee_id', 'due_date', 'priority', 'project_id', 'size');
+        if (adm) keys.push('origin');
+        if (canStructure && editing && pending) keys.push('stages', 'type_id');
+        if (pending && t.requested_by_email === S.me.email) keys.push('started_early');
         const patch = {};
-        for (const k of keys) if (k in vals && (vals[k] ?? null) !== (t[k] ?? null)) patch[k] = vals[k];
+        for (const k of keys) {
+          if (!(k in vals)) continue;
+          const a = vals[k] ?? null, b = t[k] ?? null;
+          if (k === 'stages' ? JSON.stringify(a) !== JSON.stringify(b) : a !== b) patch[k] = vals[k];
+        }
+        if (hasStages(live()) && !('stages' in patch)) { delete patch.status; delete patch.progress; }
         return patch;
+      };
+      const checkStages = (vals) => {
+        if (!('stages' in vals) || !vals.stages) return '';
+        return validateStages(vals.stages);
       };
       const saveRow = async (patch) => {
         if (!Object.keys(patch).length) return;
         const row = await q(sb.from('tasks').update(patch).eq('id', t.id).select().single());
         upsertLocal(S.tasks, row);
+        Object.assign(t, row);
         refresh();
       };
 
       $('#t-save', el)?.addEventListener('click', async () => {
         const vals = collect();
         if (!vals.title) { toast('Dê um nome à atividade', 'error'); $('#t-title', el).focus(); return; }
+        const se = checkStages(vals);
+        if (se) { toast(se, 'error'); return; }
         const btn = $('#t-save', el);
         btn.disabled = true;
         try {
           if (isNew) {
+            const base = { project_id: vals.project_id || t.project_id, title: vals.title, description: vals.description, origin: vals.origin,
+              type_id: vals.type_id ?? null, stages: vals.stages ?? null };
             if (isRequest) {
-              await createTask({ project_id: t.project_id, title: vals.title, description: vals.description });
+              await createTask({ ...base, suggested_due_date: $('#t-sdue', el)?.value || null, started_early: !!vals.started_early });
               toast('Solicitação enviada para aprovação', 'ok');
             } else {
-              await createTask({ ...vals, project_id: vals.project_id || t.project_id });
+              const extra = { assignee_id: vals.assignee_id, due_date: vals.due_date, priority: vals.priority, size: vals.size };
+              if (!base.stages) { extra.status = vals.status; extra.progress = vals.progress; }
+              await createTask({ ...base, ...extra });
               toast('Atividade criada', 'ok');
             }
           } else {
@@ -1621,6 +2101,8 @@ async function openTask(id, defaults = {}) {
         const vals = collect();
         if (!vals.due_date) { toast('Defina a data de entrega para aprovar', 'error'); $('#t-due', el).focus(); return; }
         if (!vals.title) { toast('Dê um nome à atividade', 'error'); return; }
+        const se = checkStages(vals);
+        if (se) { toast(se, 'error'); return; }
         try {
           await saveRow({ ...buildPatch(vals), due_date: vals.due_date, priority: vals.priority, approval: 'aprovada', review_note: '' });
           toast('Atividade aprovada', 'ok');
@@ -1628,22 +2110,14 @@ async function openTask(id, defaults = {}) {
         } catch (e) { toastErr(e); }
       });
 
-      $('#t-reject', el)?.addEventListener('click', () => {
-        openModal({
-          title: 'Recusar solicitação',
-          body: `<div class="field"><label>Motivo (aparece para ${esc(requester?.name || 'quem pediu')})</label><textarea class="textarea" id="rj" rows="3" placeholder="Ex.: já existe uma atividade para isso"></textarea></div>`,
-          foot: `<button class="btn" data-close>Voltar</button><button class="btn btn-danger" id="rj-ok">Recusar</button>`,
-          onMount: ({ el: m, close: closeM }) => {
-            $('#rj', m).focus();
-            $('#rj-ok', m).onclick = async () => {
-              try {
-                await saveRow({ approval: 'recusada', review_note: $('#rj', m).value.trim() });
-                closeM(); close();
-                toast('Solicitação recusada');
-              } catch (e) { toastErr(e); }
-            };
-          },
-        });
+      $('#t-reject', el)?.addEventListener('click', async () => {
+        const reason = await promptText('Recusar solicitação', `Motivo (aparece para ${requester?.name || 'quem pediu'}):`);
+        if (reason === null) return;
+        try {
+          await saveRow({ approval: 'recusada', review_note: reason });
+          close();
+          toast('Solicitação recusada');
+        } catch (e) { toastErr(e); }
       });
 
       $('#t-del', el)?.addEventListener('click', async () => {
@@ -1700,6 +2174,47 @@ async function openTask(id, defaults = {}) {
   });
 }
 
+// Caixa de texto simples (motivo de recusa/devolução)
+function promptText(title, label) {
+  return new Promise((resolve) => {
+    let done = false;
+    openModal({
+      title: esc(title),
+      body: `<div class="field"><label>${esc(label)}</label><textarea class="textarea" id="pt-in" rows="3"></textarea></div>`,
+      foot: `<button class="btn" data-close>Voltar</button><button class="btn btn-primary" id="pt-ok">Confirmar</button>`,
+      onMount: ({ el, close }) => {
+        setTimeout(() => $('#pt-in', el).focus(), 50);
+        $('#pt-ok', el).onclick = () => { done = true; const v = $('#pt-in', el).value.trim(); close(); resolve(v); };
+      },
+      onClose: () => { if (!done) resolve(null); },
+    });
+  });
+}
+
+// Pedido de novo prazo (responsável → quem passou)
+function askNewDue(t, after) {
+  openModal({
+    title: 'Pedir novo prazo',
+    body: `<p class="muted small" style="margin:0 0 12px">${esc(t.title)} · prazo atual: <b>${fmtDate(t.due_date, true) || 'sem prazo'}</b></p>
+      <div class="field"><label>Novo prazo</label><input class="input" type="date" id="nd-date" /></div>
+      <div class="field"><label>Motivo</label><textarea class="textarea" id="nd-reason" rows="3" placeholder="Ex.: o cliente atrasou o envio das informações"></textarea></div>
+      <div class="err" id="nd-err"></div>`,
+    foot: `<button class="btn" data-close>Cancelar</button><button class="btn btn-primary" id="nd-ok">Enviar pedido</button>`,
+    onMount: ({ el, close }) => {
+      $('#nd-ok', el).onclick = async () => {
+        const d = $('#nd-date', el).value, r = $('#nd-reason', el).value.trim();
+        if (!d) { $('#nd-err', el).textContent = 'Escolha a nova data.'; return; }
+        if (!r) { $('#nd-err', el).textContent = 'Explique o motivo.'; return; }
+        try {
+          const row = await q(sb.from('due_requests').insert({ task_id: t.id, new_due: d, reason: r }).select().single());
+          upsertLocal(S.dueRequests, row);
+          close(); toast('Pedido enviado para quem passou a atividade', 'ok'); after?.();
+        } catch (e) { $('#nd-err', el).textContent = translateError(e.message); }
+      };
+    },
+  });
+}
+
 // ---------------------------------------------------------------------
 // TELA: Minhas atividades
 // ---------------------------------------------------------------------
@@ -1721,9 +2236,9 @@ function viewMine() {
 
   const qMatch = (t) => !ui.q || t.title.toLowerCase().includes(ui.q.toLowerCase());
   const myReqs = S.tasks.filter((t) => !isApproved(t) && t.requested_by_email === S.me.email && activeProject(t) && qMatch(t));
-  const toApprove = isAdmin() && ui.who === 'me' ? pendingRequests().filter(qMatch) : [];
+  const toApprove = ui.who === 'me' || !isAdmin() ? [...new Set(myDecisions().map((d) => d.t))].filter(qMatch) : [];
   const groups = [
-    { key: 'approve', label: 'Solicitações para você aprovar', color: '#1d4ed8', tasks: toApprove },
+    { key: 'approve', label: 'Para você decidir (aprovar, confirmar etapa, novo prazo)', color: '#1d4ed8', tasks: toApprove },
     { key: 'req', label: 'Minhas solicitações aguardando aprovação', color: '#f59e0b', tasks: myReqs.filter((t) => approvalOf(t) === 'pendente') },
     { key: 'refused', label: 'Minhas solicitações recusadas', color: '#e2445c', tasks: myReqs.filter((t) => approvalOf(t) === 'recusada') },
     { key: 'late', label: 'Atrasadas', color: '#e2445c', tasks: late },
@@ -1771,6 +2286,7 @@ function viewTeam() {
     return `${open} em aberto${late ? ` · <span style="color:var(--danger);font-weight:600">${late} atrasada${late > 1 ? 's' : ''}</span>` : ''}`;
   };
   $('#view').innerHTML = `
+    ${adm ? `<a class="btn btn-block" href="#/modelos" style="margin-bottom:14px;justify-content:flex-start">${ic('checksq')} Modelos de etapas (tipos de atividade) <span class="muted small" style="margin-left:auto">configurar →</span></a>` : ''}
     <div class="page-head"><div class="t"><h1>Equipe</h1><p>${adm ? 'Cadastre aqui o e-mail de cada colaborador. Só quem estiver nesta lista consegue entrar no app.' : 'Pessoas da equipe com acesso ao app.'}</p></div></div>
     ${adm ? `<div class="card">
       <h3>Adicionar colaborador</h3>
@@ -2346,9 +2862,9 @@ async function fetchAll(table) {
 }
 async function exportBackup() {
   try {
-    const [team_members, projects, tasks, task_comments, subtasks] = await Promise.all(
-      ['team_members', 'projects', 'tasks', 'task_comments', 'subtasks'].map(fetchAll));
-    const data = { app: 'gestao-atividades', tipo: 'equipe', versao: 2, criado_em: new Date().toISOString(), criado_por: S.me.email, data: { team_members, projects, tasks, task_comments, subtasks } };
+    const [team_members, projects, tasks, task_comments, subtasks, activity_types, due_requests, task_history] = await Promise.all(
+      ['team_members', 'projects', 'tasks', 'task_comments', 'subtasks', 'activity_types', 'due_requests', 'task_history'].map(fetchAll));
+    const data = { app: 'gestao-atividades', tipo: 'equipe', versao: 3, criado_em: new Date().toISOString(), criado_por: S.me.email, data: { team_members, projects, tasks, task_comments, subtasks, activity_types, due_requests, task_history } };
     downloadJson(data, `backup-atividades-${todayStr()}.json`);
     localStorage.setItem(BACKUP_KEY, new Date().toISOString());
     toast(`Backup baixado: ${projects.length} projetos, ${tasks.length} atividades`, 'ok');

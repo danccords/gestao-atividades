@@ -30,9 +30,17 @@ App web (funciona no computador e no celular) para organizar projetos e atividad
 - Essas regras são aplicadas **no banco de dados** (não só na tela).
 - As anotações são privadas de verdade: nem o administrador consegue ler as de outra pessoa.
 
-**Subatividades**: dentro de cada atividade dá para criar etapas (com responsável e prazo opcionais). Quando a atividade tem etapas, o progresso é calculado sozinho pela proporção de etapas concluídas. Só quem passou a atividade e o responsável criam e marcam etapas.
-
-Automação: colocar o progresso em 100% marca como *Concluído* (e vice-versa). Sair de 0% muda de *Não iniciado* para *Em andamento*.
+**Fluxo por etapas (progresso mensurável)**
+- Em **Modelos de etapas** (menu, só admins) ficam os fluxos da empresa, cada etapa com o **% acumulado** que ela representa (ex.: Projeto/Detalhamento → Levantamento/3D 30%, Detalhamento 2D 65%, Revisão interna 85%, Liberado p/ fabricação 100%). Vêm 4 modelos prontos; dá para criar, editar e desativar.
+- Ao criar/aprovar uma atividade escolhe-se o modelo (ou *Livre*). A atividade recebe uma **cópia** das etapas, que pode ser ajustada só naquela atividade por quem passou.
+- O **progresso e o status são calculados pelo banco**: % = última etapa concluída. Etapas marcadas como *confirmar* (normalmente a última) só são concluídas por quem passou a atividade; o responsável pede a confirmação e a atividade fica *Em revisão*.
+- **Colaborador em reunião sem o gestor**: cria a solicitação com o **prazo combinado** e a origem (ex.: "Reunião com cliente X"). O admin aprova definindo prazo real, prioridade, tamanho e o modelo de etapas. O prazo sugerido fica registrado. Se já começou, marca "Já iniciei" e pode ir concluindo etapas antes da aprovação.
+- **Pedido de novo prazo**: o responsável pede, quem passou aprova ou recusa.
+- **Impedimento**: aguardando cliente / fornecedor / informação interna / bloqueado, com observação.
+- **Tamanho P/M/G** pesa no progresso do projeto (P=1, M=2, G=3).
+- **Para você decidir**: na tela inicial e no sino aparecem solicitações, confirmações de etapa e pedidos de prazo esperando você.
+- **Histórico** automático de cada atividade (quem aprovou, mudou prazo, concluiu etapa...).
+- Atividades *Livres* continuam com status e % manuais. Subatividades viraram um checklist simples e não mexem mais no progresso.
 
 ---
 

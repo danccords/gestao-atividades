@@ -23,7 +23,6 @@ drop policy if exists "tar_apagar"  on public.tasks;
 drop policy if exists "tar_editar"  on public.tasks;
 drop policy if exists "com_inserir" on public.task_comments;
 drop policy if exists "com_ver"     on public.task_comments;
-drop function if exists public.can_touch_task(uuid);
 drop function if exists public.is_task_manager(text);
 drop function if exists public.is_task_manager(text, text);
 
