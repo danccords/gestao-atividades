@@ -584,7 +584,7 @@ async function createTask(fields) {
 function setupRealtime() {
   teardownRealtime();
   S.channel = sb.channel('equipe-db')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => { applyChange(S.tasks, p); S.onTaskChanged?.(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => { checkFinished(p); applyChange(S.tasks, p); S.onTaskChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (p) => applyChange(S.projects, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_types' }, (p) => applyChange(S.types, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'due_requests' }, (p) => { applyChange(S.dueRequests, p); S.onDueChanged?.(); })
@@ -692,7 +692,7 @@ async function logout() {
 
 function updateChrome() {
   const { late, soon } = alertsFor(myTasks());
-  const n = late.length + soon.length + myDecisions().length;
+  const n = late.length + soon.length + myDecisions().length + finishedForMe().length;
   const badge = $('#bell-badge');
   if (badge) { badge.hidden = n === 0; badge.textContent = n > 99 ? '99+' : n; }
   for (const id of ['#nav-count', '#bn-count']) {
@@ -721,10 +721,17 @@ function openBell(anchor) {
   const { late, soon } = alertsFor(myTasks());
   const items = [...late, ...soon].sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
   const reqs = myDecisions();
+  const fin = finishedForMe();
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const html = `
-    <div class="ttl">Avisos de prazo</div>
+    <div class="ttl">Avisos</div>
     <div class="notif-list">
+      ${fin.length ? '<div class="ttl" style="padding-top:2px">Concluídas</div>' : ''}
+      ${fin.map((t) => `
+        <div class="notif" data-task="${t.id}">
+          <span class="dot" style="background:var(--ok)"></span>
+          <div><b>${esc(firstName(member(t.assignee_id)?.name || ''))} concluiu ${esc(t.title)}</b><span>${esc(project(t.project_id)?.name || '')} · ${relTime(t.updated_at)}</span></div>
+        </div>`).join('')}
       ${reqs.length ? '<div class="ttl" style="padding-top:2px">Para você decidir</div>' : ''}
       ${reqs.map((d) => `
         <div class="notif" data-task="${d.t.id}">
@@ -732,7 +739,8 @@ function openBell(anchor) {
           <div><b>${esc(d.label)}</b><span>${esc(d.t.title)} · ${esc(project(d.t.project_id)?.name || '')} · ${waitText(d.since)}</span></div>
         </div>`).join('')}
       ${reqs.length && items.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
-      ${items.length || reqs.length ? items.map((t) => `
+      ${(reqs.length || fin.length) && items.length && !reqs.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
+      ${items.length || reqs.length || fin.length ? items.map((t) => `
         <div class="notif" data-task="${t.id}">
           <span class="dot" style="background:${dueState(t) === 'late' ? 'var(--danger)' : 'var(--warn)'}"></span>
           <div><b>${esc(t.title)}</b><span>${esc(project(t.project_id)?.name || '')} · ${esc(dueText(t))}</span></div>
@@ -740,6 +748,7 @@ function openBell(anchor) {
       : `<div class="notif" style="cursor:default"><span class="dot" style="background:var(--ok)"></span><div><b>Tudo em dia</b><span>Nenhuma atividade sua atrasada ou vencendo nos próximos ${DUE_SOON_DAYS} dias.</span></div></div>`}
     </div>
     ${perm === 'default' ? `<button class="btn btn-sm btn-block" id="enable-notif" style="margin-top:6px">${ic('bell')} Ativar notificações neste aparelho</button>` : ''}`;
+  if (fin.length) { markDoneSeen(fin.map((t) => t.id)); setTimeout(updateChrome, 0); }
   openPopover(anchor, html, (el) => {
     $$('[data-task]', el).forEach((n) => (n.onclick = () => { closePopover(); openTask(n.dataset.task); }));
     const b = $('#enable-notif', el);
@@ -855,31 +864,34 @@ function subChip(t) {
   return `<span class="sub-chip ${done === list.length ? 'all' : ''}" data-act="open" title="Subatividades concluídas">${ic('checksq')}${done}/${list.length}</span>`;
 }
 
-// Última atualização escrita na atividade (aparece na lista) + aviso de "sem atualização"
-function updateLine(t, compact = false) {
-  if (!isApproved(t)) return t.started_early ? `<div class="task-badges"><span class="dec-badge">Já iniciada (aguardando aprovação)</span></div>` : '';
+// Resumo curto da última atualização (uma linha só na lista)
+function updPreview(body) {
+  const lines = String(body || '').split('\n').map((x) => x.trim()).filter(Boolean);
+  const clean = (x) => x.replace(/^[^\p{L}\p{N}"]+/u, '').replace(/^(Feito|Falta)\s*:\s*/i, '');
+  const feito = lines.find((x) => /^✅\s*Feito:/.test(x));
+  const main = feito || lines.find((x) => !/^📊/.test(x)) || lines[0] || '';
+  return clean(main);
+}
+
+// Última atualização escrita na atividade (aparece na lista, compacta)
+function updateLine(t) {
+  if (!isApproved(t)) return t.started_early ? `<div class="task-badges"><span class="dec-badge">Já iniciada</span></div>` : '';
   const lu = S.lastUpdate[t.id];
   const open = t.status !== 'concluido' && !!t.assignee_id;
   const ageH = lu ? (Date.now() - new Date(lu.created_at).getTime()) / 3600000 : Infinity;
   const days = Math.floor(ageH / 24);
   const stale = open && ageH > 24;
   const who = lu ? (memberByEmail(lu.author_email)?.name || lu.author_email) : '';
-  const txt = lu ? String(lu.body).replace(/\s*\n+\s*/g, ' · ') : '';
-  const canUpd = canEditTask(t) && open;
   const dueReq = S.dueRequests.find((r) => r.task_id === t.id && r.status === 'pendente');
-  const { pend } = stageInfo(t);
   const badges = [
-    t.hold ? `<span class="hold-badge">⏸ ${esc(HOLDS[t.hold] || t.hold)}${t.hold_note ? ` — ${esc(t.hold_note)}` : ''}</span>` : '',
-    pend >= 0 ? `<span class="dec-badge">${isTaskManager(t) ? 'Confirmar etapa' : 'Aguardando confirmação'}</span>` : '',
-    dueReq ? `<span class="dec-badge">📅 Pedido de novo prazo: ${fmtDate(dueReq.new_due)}</span>` : '',
+    t.hold ? `<span class="hold-badge" title="${esc(t.hold_note || '')}">⏸ ${esc(HOLDS[t.hold] || t.hold)}</span>` : '',
+    dueReq ? `<span class="dec-badge">📅 Novo prazo pedido</span>` : '',
   ].join('');
+  const staleTxt = stale ? (lu ? `sem atualização há ${days <= 1 ? '1 dia' : days + ' dias'}` : 'sem atualização') : '';
+  if (!lu && !badges && !staleTxt) return '';
   return `<div class="task-upd-wrap">
-    ${badges ? `<div class="task-badges">${badges}</div>` : ''}
-    ${lu ? `<div class="task-upd" data-act="open" title="${esc(lu.body)}">${ic('msg')}<span><b>${esc(firstName(who))}</b> <span class="muted">${relTime(lu.created_at)}</span> — ${esc(txt)}</span></div>` : ''}
-    <div class="task-upd-actions">
-      ${stale ? `<span class="upd-stale">${lu ? `Sem atualização há ${days <= 1 ? '1 dia' : days + ' dias'}` : 'Nenhuma atualização ainda'}</span>` : ''}
-      ${canUpd && !compact ? `<button class="upd-btn" data-act="update">${ic('plus')} Atualização do dia</button>` : ''}
-    </div>
+    ${lu ? `<div class="task-upd" data-act="open" title="${esc(lu.body)}"><span><b>${esc(firstName(who))}</b> <span class="muted">${relTime(lu.created_at)}:</span> ${esc(updPreview(lu.body))}</span></div>` : ''}
+    ${badges || staleTxt ? `<div class="task-badges">${badges}${staleTxt ? `<span class="upd-stale">${staleTxt}</span>` : ''}</div>` : ''}
   </div>`;
 }
 
@@ -898,6 +910,7 @@ function taskRow(t, { color, showProject }) {
       </div>
       ${subChip(t)}
       ${cc ? `<span class="cmt-count">${ic('msg')}${cc}</span>` : ''}
+      ${canEditTask(t) && isApproved(t) && t.status !== 'concluido' ? `<button class="upd-mini" data-act="update" title="Escrever atualização do dia" aria-label="Atualização do dia">${ic('plus')}</button>` : ''}
       <span data-act="open" style="display:flex;cursor:pointer">${ic('open', 'open-ic')}</span>
     </div>
     <div class="td col-who">${whoCell(t)}</div>
@@ -1056,7 +1069,7 @@ function stageInfo(t) {
   return { list, next, pend, done: list.filter((x) => x.done_at).length, all: list.length > 0 && next === -1 };
 }
 function copyStages(type) {
-  return (type?.stages || []).map((x) => ({ name: x.name, pct: Number(x.pct), confirm: !!x.confirm }));
+  return (type?.stages || []).map((x) => ({ name: x.name, pct: Number(x.pct), confirm: false }));
 }
 function sameStructure(a, b) {
   const k = (l) => JSON.stringify((l || []).map((x) => [x.name, Number(x.pct), !!x.confirm]));
@@ -1121,7 +1134,6 @@ function stageEditor(box, initial, { color = '#1d4ed8', onChange } = {}) {
           <div class="stg-mv"><button type="button" class="btn btn-ghost btn-sm" data-up ${i ? '' : 'disabled'} title="Subir">▲</button><button type="button" class="btn btn-ghost btn-sm" data-down ${i < list.length - 1 ? '' : 'disabled'} title="Descer">▼</button></div>
           <input class="input stg-name" value="${esc(x.name)}" placeholder="Nome da etapa" />
           <div class="stg-pct"><input class="input" type="number" min="1" max="100" step="1" value="${x.pct}" /><span>%</span></div>
-          <label class="stg-conf" title="A conclusão desta etapa precisa ser confirmada por quem passou a atividade"><input type="checkbox" ${x.confirm ? 'checked' : ''} /> confirma</label>
           ${x.done_at ? `<span class="stg-done" title="Etapa já concluída">${ic('check')}</span>` : ''}
           <button type="button" class="btn btn-ghost btn-icon btn-sm" data-del title="Remover etapa">${ic('x')}</button>
         </div>`).join('')}
@@ -1136,7 +1148,6 @@ function stageEditor(box, initial, { color = '#1d4ed8', onChange } = {}) {
       const i = Number(row.dataset.i);
       $('.stg-name', row).oninput = (e) => { list[i].name = e.target.value; refreshMeta(); changed(); };
       $('.stg-pct input', row).oninput = (e) => { list[i].pct = Number(e.target.value); refreshMeta(); changed(); };
-      $('.stg-conf input', row).onchange = (e) => { list[i].confirm = e.target.checked; changed(); };
       $('[data-up]', row).onclick = () => { if (i) { const nm = list[i].name; list[i].name = list[i - 1].name; list[i - 1].name = nm; const c = list[i].confirm; list[i].confirm = list[i - 1].confirm; list[i - 1].confirm = c; render(); changed(); } };
       $('[data-down]', row).onclick = () => { if (i < list.length - 1) { const nm = list[i].name; list[i].name = list[i + 1].name; list[i + 1].name = nm; const c = list[i].confirm; list[i].confirm = list[i + 1].confirm; list[i + 1].confirm = c; render(); changed(); } };
       $('[data-del]', row).onclick = () => { list = removeStageAt(list, i); render(); changed(); };
@@ -1167,7 +1178,7 @@ function stepperHtml(t) {
     return `<div class="stp ${st}" title="${esc(x.name)}${x.done_at ? ' — concluída em ' + new Date(x.done_at).toLocaleDateString('pt-BR') : ''}">
       <div class="stp-dot">${x.done_at ? ic('check') : i + 1}</div>
       <div class="stp-name">${esc(x.name)}</div>
-      <div class="stp-pct">${x.pct}%${x.confirm ? ' · confirma' : ''}</div></div>`;
+      <div class="stp-pct">${x.pct}%</div></div>`;
   }).join('')}</div>`;
 }
 
@@ -1189,13 +1200,43 @@ function decidesFor(t) {
   if (t.created_by_email === S.me.email) return true;
   return !S.members.some((m) => m.email === t.created_by_email && m.role === 'admin' && m.active);
 }
+// Atividades concluídas por outra pessoa (aviso para o admin que passou)
+const SEEN_KEY = 'ga-seen-done';
+function seenDone() { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '{}'); } catch { return {}; } }
+function finishedForMe() {
+  if (!isAdmin()) return [];
+  const seen = seenDone();
+  const limit = Date.now() - 7 * 86400000;
+  return S.tasks.filter((t) => t.status === 'concluido' && isApproved(t) && activeProject(t) && decidesFor(t)
+      && t.assignee_id && t.assignee_id !== S.me.id && new Date(t.updated_at || 0).getTime() > limit && !seen[t.id])
+    .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+}
+function markDoneSeen(ids) {
+  const seen = seenDone();
+  const limit = Date.now() - 30 * 86400000;
+  for (const k of Object.keys(seen)) if (seen[k] < limit) delete seen[k];
+  ids.forEach((id) => (seen[id] = Date.now()));
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch {}
+}
+function checkFinished(p) {
+  const n = p.new;
+  if (!n || p.eventType !== 'UPDATE' || n.status !== 'concluido') return;
+  const prev = task(n.id);
+  if (!prev || prev.status === 'concluido' || !isAdmin() || !decidesFor(n) || n.assignee_id === S.me?.id) return;
+  const who = member(n.assignee_id)?.name || 'O responsável';
+  const proj = project(n.project_id)?.name || '';
+  toast(`✅ ${firstName(who)} concluiu "${n.title}"`, 'ok');
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const title = 'Atividade concluída';
+    const body = `${who} concluiu "${n.title}"${proj ? ` (${proj})` : ''}.`;
+    navigator.serviceWorker?.getRegistration().then((reg) => reg
+      ? reg.showNotification(title, { body, icon: 'icons/icon-192.png', tag: 'done-' + n.id })
+      : new Notification(title, { body, icon: 'icons/icon-192.png' })).catch(() => {});
+  }
+}
 function myDecisions() {
   const out = [];
   if (isAdmin()) pendingRequests().forEach((t) => out.push({ t, kind: 'aprovar', label: 'Aprovar solicitação', since: t.created_at }));
-  S.tasks.filter((t) => activeProject(t) && isApproved(t) && hasStages(t) && decidesFor(t)).forEach((t) => {
-    const { pend, list } = stageInfo(t);
-    if (pend >= 0) out.push({ t, kind: 'etapa', label: `Confirmar etapa "${list[pend].name}"`, since: list[pend].requested_at });
-  });
   S.dueRequests.filter((r) => r.status === 'pendente').forEach((r) => {
     const t = task(r.task_id);
     if (t && activeProject(t) && decidesFor(t)) out.push({ t, kind: 'prazo', label: `Novo prazo: ${fmtDate(r.old_due) || 'sem prazo'} → ${fmtDate(r.new_due)}`, since: r.created_at });
@@ -1228,13 +1269,13 @@ function viewModels() {
         return `<div class="pcard" style="--c:${esc(ty.color)};${ty.active ? '' : 'opacity:.55'}" data-type="${ty.id}">
           <div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1">${esc(ty.name)}</h3>${ty.active ? '' : '<span class="archived-tag">Inativo</span>'}</div>
           <div class="stg-bar">${ty.stages.map((x, i) => `<i style="width:${x.pct - (i ? ty.stages[i - 1].pct : 0)}%;background:${cols[i]}"></i>`).join('')}</div>
-          <div class="type-steps">${ty.stages.map((x) => `<span>${esc(x.name)} <b>${x.pct}%</b>${x.confirm ? ' ✔' : ''}</span>`).join('<i>→</i>')}</div>
+          <div class="type-steps">${ty.stages.map((x) => `<span>${esc(x.name)} <b>${x.pct}%</b></span>`).join('<i>→</i>')}</div>
           <div class="meta"><span>${used(ty.id)} atividade(s) usando</span></div>
         </div>`;
       }).join('')}
       <div class="pcard" style="--c:#a8adba;cursor:default"><h3>Livre</h3><p>Sem etapas: o progresso é informado manualmente. Bom para coisas rápidas e avulsas.</p></div>
     </div>
-    <p class="small muted" style="margin-top:14px">✔ = a conclusão dessa etapa precisa ser confirmada por quem passou a atividade.</p>`;
+`;
   $('#new-type').onclick = () => typeModal();
   $$('[data-type]').forEach((c) => (c.onclick = () => typeModal(typeById(c.dataset.type))));
 }
@@ -1256,14 +1297,14 @@ function typeModal(ty = null) {
     onMount: ({ el, close }) => {
       el.querySelector('.modal').style.maxWidth = '640px';
       editor = stageEditor($('#ty-stages', el), ty?.stages?.length ? ty.stages : [
-        { name: 'Início', pct: 30, confirm: false }, { name: 'Execução', pct: 80, confirm: false }, { name: 'Entrega', pct: 100, confirm: true }], { color });
+        { name: 'Início', pct: 30, confirm: false }, { name: 'Execução', pct: 80, confirm: false }, { name: 'Entrega', pct: 100, confirm: false }], { color });
       $$('[data-c]', el).forEach((b) => (b.onclick = () => {
         color = b.dataset.c;
         $$('[data-c]', el).forEach((x) => (x.style.borderColor = x.dataset.c === color ? '#1f2430' : 'transparent'));
       }));
       $('#ty-save', el).onclick = async () => {
         const name = $('#ty-name', el).value.trim();
-        const stages = editor.get().map(({ name: n, pct, confirm }) => ({ name: n, pct, confirm: !!confirm }));
+        const stages = editor.get().map(({ name: n, pct, confirm }) => ({ name: n, pct, confirm: false }));
         const err = !name ? 'Dê um nome ao modelo.' : validateStages(stages);
         if (err) { $('#ty-err', el).textContent = err; return; }
         const fields = { name, color, stages, active: ty ? $('#ty-active', el).checked : true };
@@ -1691,7 +1732,7 @@ function dailyUpdate(t) {
   const { list, next } = stageInfo(t);
   const nx = staged && next >= 0 ? list[next] : null;
   const mgr = isApproved(t) ? isTaskManager(t) : isAdmin();
-  const stageLabel = nx ? (nx.confirm && !mgr ? `Terminei a etapa "${esc(nx.name)}" (pedir confirmação a quem passou)` : `Concluí a etapa "${esc(nx.name)}" (${nx.pct}%)`) : '';
+  const stageLabel = nx ? `Concluí a etapa "${esc(nx.name)}" (${nx.pct}%)` : '';
   openModal({
     title: 'Atualização do dia',
     body: `<p class="muted small" style="margin:0 0 12px">${esc(t.title)}${staged && nx ? ` · etapa atual: <b>${esc(nx.name)}</b>` : ''}</p>
@@ -1717,10 +1758,10 @@ function dailyUpdate(t) {
           if (done) parts.push(`✅ Feito: ${done}`);
           if (todo) parts.push(`⏳ Falta: ${todo}`);
           if (!staged && prog !== t.progress) parts.push(`📊 Progresso: ${t.progress}% → ${prog}%`);
-          if (stageDone && nx) parts.push(nx.confirm && !mgr ? `🏁 Etapa "${nx.name}" terminada — aguardando confirmação` : `🏁 Etapa "${nx.name}" concluída (${nx.pct}%)`);
+          if (stageDone && nx) parts.push(`🏁 Etapa "${nx.name}" concluída (${nx.pct}%)`);
           if (parts.length) await q(sb.from('task_comments').insert({ task_id: t.id, body: parts.join('\n'), author_email: S.me.email }));
           close();
-          if (stageDone && nx) await stageAction(t, next, nx.confirm && !mgr ? 'request' : 'done');
+          if (stageDone && nx) await stageAction(t, next, 'done');
           else if (!staged && prog !== t.progress) await updateTask(t.id, { progress: prog });
           await reloadLastUpdates();
           refresh();
@@ -1896,7 +1937,7 @@ async function openTask(id, defaults = {}) {
           if (!draftStages || !draftStages.length) {
             box.innerHTML = `<div class="small muted" style="margin-bottom:6px">Sem etapas: o progresso é informado manualmente.${canStructure ? ' Escolha um tipo acima ou ' : ''}</div>
               ${canStructure ? `<button type="button" class="btn btn-sm" id="stg-addfirst">${ic('plus')} Criar etapas só para esta atividade</button>` : ''}`;
-            $('#stg-addfirst', box)?.addEventListener('click', () => { draftStages = [{ name: '', pct: 100, confirm: true }]; renderStages(); renderStatusProg(); });
+            $('#stg-addfirst', box)?.addEventListener('click', () => { draftStages = [{ name: '', pct: 100, confirm: false }]; renderStages(); renderStatusProg(); });
             editor = null;
           } else {
             box.innerHTML = `<div class="small muted" style="margin-bottom:8px">${isNew ? 'Etapas copiadas do modelo. Tire as que não se aplicam ou inclua alguma só para esta atividade.' : 'Ajuste as etapas desta atividade (o modelo não é alterado).'}</div><div id="stg-ed"></div>
@@ -1908,7 +1949,7 @@ async function openTask(id, defaults = {}) {
               const err = validateStages(list);
               if (err) { toast(err, 'error'); return; }
               const old = live().stages || [];
-              const merged = list.map((x) => { const o = old.find((y) => y.name === x.name); return o ? { ...o, name: x.name, pct: x.pct, confirm: !!x.confirm } : { name: x.name, pct: x.pct, confirm: !!x.confirm }; });
+              const merged = list.map((x) => { const o = old.find((y) => y.name === x.name); return o ? { ...o, name: x.name, pct: x.pct, confirm: false } : { name: x.name, pct: x.pct, confirm: false }; });
               await updateTask(t.id, { stages: merged, type_id: typeSel.value || null });
               editing = pending && canStructure;
               draftStages = hasStages(live()) ? live().stages.map((x) => ({ ...x })) : null;
@@ -1937,11 +1978,11 @@ async function openTask(id, defaults = {}) {
               : `<div class="stage-msg">Aguardando ${esc(firstName(creatorName))} confirmar <b>${esc(list[pend].name)}</b>.</div>
                  ${canEd ? `<div class="stage-btns"><button type="button" class="btn btn-sm" data-sa="cancel" data-i="${pend}">Cancelar pedido</button></div>` : ''}`;
           } else if (canEd && nx) {
-            const needConfirm = nx.confirm && !stageMgr;
+            const needConfirm = false;
             actions = `<div class="stage-btns"><button type="button" class="btn btn-primary" data-sa="${needConfirm ? 'request' : 'done'}" data-i="${next}">${ic('ok')} ${needConfirm ? `Terminei "${esc(nx.name)}" — pedir confirmação` : `Concluir etapa "${esc(nx.name)}"`}</button></div>
               ${pending ? `<div class="small muted" style="margin-top:6px">A atividade ainda não foi aprovada; o avanço só conta no projeto depois da aprovação.</div>` : ''}`;
           }
-          const canUndo = prevDone && pend < 0 && (stageMgr || (canEd && !prevDone.confirm));
+          const canUndo = prevDone && pend < 0 && (stageMgr || canEd);
           box.innerHTML = `${stepperHtml(cur)}${actions}
             <div class="stage-links">
               ${canUndo ? `<button type="button" class="linkbtn" data-sa="undo" data-i="${done - 1}">Desfazer "${esc(prevDone.name)}"</button>` : ''}
@@ -2242,7 +2283,7 @@ function viewMine() {
   const myReqs = S.tasks.filter((t) => !isApproved(t) && t.requested_by_email === S.me.email && activeProject(t) && qMatch(t));
   const toApprove = ui.who === 'me' || !isAdmin() ? [...new Set(myDecisions().map((d) => d.t))].filter(qMatch) : [];
   const groups = [
-    { key: 'approve', label: 'Para você decidir (aprovar, confirmar etapa, novo prazo)', color: '#1d4ed8', tasks: toApprove },
+    { key: 'approve', label: 'Para você decidir (aprovar, novo prazo)', color: '#1d4ed8', tasks: toApprove },
     { key: 'req', label: 'Minhas solicitações aguardando aprovação', color: '#f59e0b', tasks: myReqs.filter((t) => approvalOf(t) === 'pendente') },
     { key: 'refused', label: 'Minhas solicitações recusadas', color: '#e2445c', tasks: myReqs.filter((t) => approvalOf(t) === 'recusada') },
     { key: 'late', label: 'Atrasadas', color: '#e2445c', tasks: late },

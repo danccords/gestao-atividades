@@ -34,10 +34,10 @@ grant select, insert, update, delete on public.activity_types to authenticated;
 
 insert into public.activity_types (name, color, position, stages)
 select * from (values
-  ('Documentação / Liberação', '#0ea5e9', 1, '[{"name":"Coleta de dados","pct":20,"confirm":false},{"name":"Preenchimento","pct":50,"confirm":false},{"name":"Envio em plataforma","pct":80,"confirm":false},{"name":"Aprovação","pct":100,"confirm":true}]'::jsonb),
-  ('Projeto / Detalhamento',   '#1d4ed8', 2, '[{"name":"Levantamento / 3D","pct":30,"confirm":false},{"name":"Detalhamento 2D","pct":65,"confirm":false},{"name":"Revisão interna","pct":85,"confirm":false},{"name":"Liberado p/ fabricação","pct":100,"confirm":true}]'::jsonb),
-  ('Fabricação / Caldeiraria', '#ff642e', 3, '[{"name":"Corte / Dobra","pct":25,"confirm":false},{"name":"Solda / Montagem","pct":60,"confirm":false},{"name":"Acabamento / Pintura","pct":85,"confirm":false},{"name":"Inspeção / Expedição","pct":100,"confirm":true}]'::jsonb),
-  ('Cotação / Suprimentos',    '#00a862', 4, '[{"name":"Especificação","pct":20,"confirm":false},{"name":"Cotação enviada","pct":50,"confirm":false},{"name":"Análise técnica / comercial","pct":80,"confirm":false},{"name":"Pedido emitido","pct":100,"confirm":true}]'::jsonb)
+  ('Documentação / Liberação', '#0ea5e9', 1, '[{"name":"Coleta de dados","pct":20,"confirm":false},{"name":"Preenchimento","pct":50,"confirm":false},{"name":"Envio em plataforma","pct":80,"confirm":false},{"name":"Aprovação","pct":100,"confirm":false}]'::jsonb),
+  ('Projeto / Detalhamento',   '#1d4ed8', 2, '[{"name":"Levantamento / 3D","pct":30,"confirm":false},{"name":"Detalhamento 2D","pct":65,"confirm":false},{"name":"Revisão interna","pct":85,"confirm":false},{"name":"Liberado p/ fabricação","pct":100,"confirm":false}]'::jsonb),
+  ('Fabricação / Caldeiraria', '#ff642e', 3, '[{"name":"Corte / Dobra","pct":25,"confirm":false},{"name":"Solda / Montagem","pct":60,"confirm":false},{"name":"Acabamento / Pintura","pct":85,"confirm":false},{"name":"Inspeção / Expedição","pct":100,"confirm":false}]'::jsonb),
+  ('Cotação / Suprimentos',    '#00a862', 4, '[{"name":"Especificação","pct":20,"confirm":false},{"name":"Cotação enviada","pct":50,"confirm":false},{"name":"Análise técnica / comercial","pct":80,"confirm":false},{"name":"Pedido emitido","pct":100,"confirm":false}]'::jsonb)
 ) as v(name, color, position, stages)
 where not exists (select 1 from public.activity_types);
 
