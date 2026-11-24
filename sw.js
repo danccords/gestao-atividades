@@ -1,7 +1,7 @@
 // Service worker: permite instalar o app e abrir mais rápido.
 // Arquivos do app: tenta a rede primeiro (sempre a versão mais nova) e usa cache se estiver offline.
 // Dados do Supabase nunca são guardados em cache.
-const CACHE = 'ga-v15';
+const CACHE = 'ga-v16';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './manifest.webmanifest', './icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

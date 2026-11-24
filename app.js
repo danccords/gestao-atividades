@@ -584,7 +584,7 @@ async function createTask(fields) {
 function setupRealtime() {
   teardownRealtime();
   S.channel = sb.channel('equipe-db')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => { checkFinished(p); applyChange(S.tasks, p); S.onTaskChanged?.(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => { checkFinished(p); checkAssigned(p); applyChange(S.tasks, p); S.onTaskChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (p) => applyChange(S.projects, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_types' }, (p) => applyChange(S.types, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'due_requests' }, (p) => { applyChange(S.dueRequests, p); S.onDueChanged?.(); })
@@ -719,7 +719,7 @@ async function logout() {
 
 function updateChrome() {
   const { late, soon } = alertsFor(myTasks());
-  const n = late.length + soon.length + myDecisions().length + finishedForMe().length;
+  const n = late.length + soon.length + myDecisions().length + finishedForMe().length + newForMe().length;
   const badge = $('#bell-badge');
   if (badge) { badge.hidden = n === 0; badge.textContent = n > 99 ? '99+' : n; }
   for (const id of ['#nav-count', '#bn-count']) {
@@ -749,10 +749,17 @@ function openBell(anchor) {
   const items = [...late, ...soon].sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
   const reqs = myDecisions();
   const fin = finishedForMe();
+  const nov = newForMe();
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const html = `
     <div class="ttl">Avisos</div>
     <div class="notif-list">
+      ${nov.length ? '<div class="ttl" style="padding-top:2px">Serviços novos para você</div>' : ''}
+      ${nov.map((t) => `
+        <div class="notif" data-task="${t.id}">
+          <span class="dot" style="background:var(--primary)"></span>
+          <div><b>${esc(t.title)}</b><span>${esc(firstName(memberByEmail(t.created_by_email)?.name || 'Gestor'))} passou · ${esc(project(t.project_id)?.name || '')}${t.due_date ? ` · entregar até ${fmtDate(t.due_date)}` : ''}</span></div>
+        </div>`).join('')}
       ${fin.length ? '<div class="ttl" style="padding-top:2px">Concluídas</div>' : ''}
       ${fin.map((t) => `
         <div class="notif" data-task="${t.id}">
@@ -766,8 +773,8 @@ function openBell(anchor) {
           <div><b>${esc(d.label)}</b><span>${esc(d.t.title)} · ${esc(project(d.t.project_id)?.name || '')} · ${waitText(d.since)}</span></div>
         </div>`).join('')}
       ${reqs.length && items.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
-      ${(reqs.length || fin.length) && items.length && !reqs.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
-      ${items.length || reqs.length || fin.length ? items.map((t) => `
+      ${(reqs.length || fin.length || nov.length) && items.length && !reqs.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
+      ${items.length || reqs.length || fin.length || nov.length ? items.map((t) => `
         <div class="notif" data-task="${t.id}">
           <span class="dot" style="background:${dueState(t) === 'late' ? 'var(--danger)' : 'var(--warn)'}"></span>
           <div><b>${esc(t.title)}</b><span>${esc(project(t.project_id)?.name || '')} · ${esc(dueText(t))}</span></div>
@@ -775,7 +782,9 @@ function openBell(anchor) {
       : `<div class="notif" style="cursor:default"><span class="dot" style="background:var(--ok)"></span><div><b>Tudo em dia</b><span>Nenhuma atividade sua atrasada ou vencendo nos próximos ${DUE_SOON_DAYS} dias.</span></div></div>`}
     </div>
     ${perm === 'default' ? `<button class="btn btn-sm btn-block" id="enable-notif" style="margin-top:6px">${ic('bell')} Ativar notificações neste aparelho</button>` : ''}`;
-  if (fin.length) { markDoneSeen(fin.map((t) => t.id)); setTimeout(updateChrome, 0); }
+  if (fin.length) markDoneSeen(fin.map((t) => t.id));
+  if (nov.length) markNewSeen(nov.map((t) => t.id));
+  if (fin.length || nov.length) setTimeout(updateChrome, 0);
   openPopover(anchor, html, (el) => {
     $$('[data-task]', el).forEach((n) => (n.onclick = () => { closePopover(); openTask(n.dataset.task); }));
     const b = $('#enable-notif', el);
@@ -1254,6 +1263,41 @@ function markDoneSeen(ids) {
   for (const k of Object.keys(seen)) if (seen[k] < limit) delete seen[k];
   ids.forEach((id) => (seen[id] = Date.now()));
   try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch {}
+}
+// Serviços novos passados para mim (aviso para o colaborador)
+const SEEN_NEW_KEY = 'ga-seen-new';
+function seenNew() { try { return JSON.parse(localStorage.getItem(SEEN_NEW_KEY) || '{}'); } catch { return {}; } }
+function newForMe() {
+  if (!S.me) return [];
+  const seen = seenNew();
+  const limit = Date.now() - 7 * 86400000;
+  return S.tasks.filter((t) => t.assignee_id === S.me.id && isApproved(t) && t.status !== 'concluido' && activeProject(t)
+      && t.created_by_email !== S.me.email && new Date(t.approved_at || t.created_at || 0).getTime() > limit && !seen[t.id])
+    .sort((a, b) => (b.approved_at || b.created_at || '').localeCompare(a.approved_at || a.created_at || ''));
+}
+function markNewSeen(ids) {
+  const seen = seenNew();
+  const limit = Date.now() - 30 * 86400000;
+  for (const k of Object.keys(seen)) if (seen[k] < limit) delete seen[k];
+  ids.forEach((id) => (seen[id] = Date.now()));
+  try { localStorage.setItem(SEEN_NEW_KEY, JSON.stringify(seen)); } catch {}
+}
+function checkAssigned(p) {
+  const n = p.new;
+  if (!n || !S.me || n.assignee_id !== S.me.id || (n.approval || 'aprovada') !== 'aprovada' || n.created_by_email === S.me.email) return;
+  const prev = p.eventType === 'UPDATE' ? task(n.id) : null;
+  if (p.eventType === 'UPDATE' && prev && prev.assignee_id === S.me.id && (prev.approval || 'aprovada') === 'aprovada') return;
+  if (p.eventType !== 'INSERT' && p.eventType !== 'UPDATE') return;
+  const by = memberByEmail(n.created_by_email)?.name || 'O gestor';
+  const proj = project(n.project_id)?.name || '';
+  toast(`📌 Serviço novo para você: "${n.title}"`, 'ok');
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const title = 'Serviço novo para você';
+    const body = `${firstName(by)} passou "${n.title}"${proj ? ` (${proj})` : ''}${n.due_date ? ` · entregar até ${fmtDate(n.due_date, true)}` : ''}.`;
+    navigator.serviceWorker?.getRegistration().then((reg) => reg
+      ? reg.showNotification(title, { body, icon: 'icons/icon-192.png', tag: 'new-' + n.id })
+      : new Notification(title, { body, icon: 'icons/icon-192.png' })).catch(() => {});
+  }
 }
 function checkFinished(p) {
   const n = p.new;
