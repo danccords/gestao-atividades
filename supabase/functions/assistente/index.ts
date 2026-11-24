@@ -65,13 +65,18 @@ Deno.serve(async (req) => {
     if (!history.length || history[history.length - 1].role !== 'user') return json({ error: 'bad_request' }, 400);
 
     // ---------- dados que ESSA pessoa pode ver ----------
-    const [meR, membersR, projectsR, tasksR, subsR] = await Promise.all([
+    const [meR, membersR, projectsR, tasksR, subsR, typesR, dueR] = await Promise.all([
       sb.from('team_members').select('*').eq('email', email).maybeSingle(),
       sb.from('team_members').select('id, name, email, role, active, job_title'),
       sb.from('projects').select('id, name, description, archived'),
       sb.from('tasks').select('*'),
       sb.from('subtasks').select('task_id, title, done, assignee_id, due_date, position').order('position'),
+      sb.from('activity_types').select('id, name'),
+      sb.from('due_requests').select('task_id, requested_by_email, new_due, reason, status').eq('status', 'pendente'),
     ]);
+    const typeName: Record<string, string> = Object.fromEntries((typesR.data || []).map((x) => [x.id, x.name]));
+    const dueReq: Record<string, { requested_by_email: string; new_due: string; reason: string }> =
+      Object.fromEntries((dueR.data || []).map((x) => [x.task_id, x]));
     const subsByTask: Record<string, { title: string; done: boolean; assignee_id: string | null; due_date: string | null }[]> = {};
     for (const x of subsR.data || []) (subsByTask[x.task_id] ||= []).push(x);
     const me = meR.data;
@@ -122,6 +127,29 @@ Deno.serve(async (req) => {
         const by = memberByEmail[t.created_by_email]?.name;
         if (by) parts.push(`passada por: ${by}`);
       }
+      const st = Array.isArray(t.stages) ? t.stages : [];
+      if (st.length) {
+        const done = st.filter((e: { done_at?: string }) => e.done_at);
+        const next = st.find((e: { done_at?: string }) => !e.done_at);
+        const tn = t.type_id ? typeName[t.type_id] : '';
+        let txt = `etapas${tn ? ` (${tn})` : ''}: ${st.map((e: { name: string; pct: number; done_at?: string }) => `${e.done_at ? '[feita]' : '[falta]'} ${e.name} ${e.pct}%`).join(' > ')}`;
+        if (next) {
+          txt += ` | etapa atual: ${next.name}`;
+          if (next.requested_at && !next.done_at) txt += ` (AGUARDANDO CONFIRMAÇÃO de ${memberByEmail[t.created_by_email]?.name || 'quem passou'} desde ${fmt(next.requested_at)})`;
+        }
+        if (!done.length) txt += ' | nenhuma etapa concluída';
+        parts.push(txt);
+      }
+      if (t.size) parts.push(`tamanho: ${t.size}`);
+      if (t.hold) {
+        const H: Record<string, string> = { cliente: 'aguardando cliente', fornecedor: 'aguardando fornecedor', interno: 'aguardando informação interna', bloqueado: 'bloqueado' };
+        parts.push(`IMPEDIMENTO: ${H[t.hold] || t.hold}${t.hold_note ? ` — ${clip(t.hold_note, 120)}` : ''}`);
+      }
+      if (t.suggested_due_date) parts.push(`prazo combinado/sugerido: ${fmt(t.suggested_due_date)}`);
+      if (t.origin) parts.push(`origem: ${clip(t.origin, 100)}`);
+      if (t.started_early && approval === 'pendente') parts.push('já iniciada antes da aprovação');
+      const dr = dueReq[t.id];
+      if (dr) parts.push(`PEDIDO DE NOVO PRAZO pendente (${memberByEmail[dr.requested_by_email]?.name || dr.requested_by_email}): ${fmt(dr.new_due)}${dr.reason ? ` — ${clip(dr.reason, 120)}` : ''}`);
       const l = last[t.id];
       if (l) {
         const who = memberByEmail[l.author_email]?.name || l.author_email;
@@ -134,7 +162,7 @@ Deno.serve(async (req) => {
           const r = x.assignee_id ? memberById[x.assignee_id]?.name : '';
           return `${x.done ? '[feito]' : '[falta]'} ${clip(x.title, 60)}${r ? ` (${r})` : ''}${x.due_date && !x.done ? ` até ${fmt(x.due_date)}` : ''}`;
         });
-        parts.push(`subatividades ${doneN}/${subs.length} feitas: ${items.join('; ')}${subs.length > 12 ? '; …' : ''}`);
+        parts.push(`checklist ${doneN}/${subs.length} feitas: ${items.join('; ')}${subs.length > 12 ? '; …' : ''}`);
       }
       if (t.description) parts.push(`descrição: ${clip(String(t.description).replace(/\s+/g, ' '), 160)}`);
       return '- ' + parts.join(' | ');
@@ -155,6 +183,9 @@ Regras:
 - "Minhas atividades" = atividades em que o responsável é ${me.name}.
 - Urgência: primeiro as ATRASADAS, depois as que vencem hoje e nos próximos dias; em empate, prioridade Urgente > Alta > Média > Baixa.
 - "O que tem que ser feito hoje": atrasadas, vencendo hoje ou nos próximos 2 dias, e as em andamento/bloqueadas que precisam de atenção.${me.role === 'admin' ? ' Para administradores, inclua também solicitações aguardando aprovação e quem está sem atualização há mais de 1 dia.' : ''}
+- O progresso das atividades com etapas é o % da última etapa concluída; diga em que etapa cada uma está.
+- Pendências de decisão de um gestor = solicitações aguardando aprovação, etapas AGUARDANDO CONFIRMAÇÃO e PEDIDOS DE NOVO PRAZO das atividades que ele passou.
+- Atividades com IMPEDIMENTO: mencione o motivo ao falar delas.
 - Ignore atividades concluídas, a menos que perguntem sobre elas.
 - Cite sempre o nome da atividade, o projeto, o responsável e o prazo. Use listas curtas e **negrito** para o nome da atividade.
 - Você não altera nada no app: se pedirem para mudar algo, explique onde fazer no app.
