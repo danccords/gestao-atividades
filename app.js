@@ -1866,11 +1866,12 @@ async function openTask(id, defaults = {}) {
   const approval = approvalOf(t);
   const pending = approval !== 'aprovada';
   const isRequest = isNew && !adm;                         // colaborador criando uma solicitação
+  if (isRequest) { t.type_id = null; t.stages = null; }     // tipo e etapas: o gestor define na aprovação
   const mgr = isNew ? adm : isTaskManager(t);
   const canText = isNew || mgr;                             // nome e descrição
   const canPlan = isNew ? adm : canPlanTask(t);             // prazo, prioridade, responsável, tamanho, projeto
   const canEd = isNew || canEditTask(t);                    // etapas, status, progresso, impedimento, atualizações
-  const canStructure = isNew || (pending ? (adm || mgr) : mgr);   // tipo e etapas
+  const canStructure = isNew ? adm : (pending ? adm : mgr);   // tipo e etapas (colaborador não define)
   const canReview = !isNew && pending && adm;               // aprovar / recusar
   const canDelete = !isNew && mgr;
   const stageMgr = isNew ? adm : (isApproved(t) ? mgr : adm);   // quem confirma etapas finais
@@ -1891,11 +1892,11 @@ async function openTask(id, defaults = {}) {
 
   let note = '';
   if (isRequest) {
-    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Informe o que foi combinado e o prazo sugerido. Um administrador aprova, confirma o prazo e a prioridade.</div></div>`;
+    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Escreva o que precisa ser feito, o que foi conversado na reunião e a data acordada. O gestor aprova e organiza as etapas.</div></div>`;
   } else if (!isNew && approval === 'pendente') {
     note = adm
       ? `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Solicitação de ${esc(requester?.name || t.requested_by_email || '')}</b>Enviada ${relTime(t.created_at)}${t.suggested_due_date ? ` · prazo combinado: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}${t.started_early ? ' · <b>já iniciada</b>' : ''}. Confira as etapas, defina a <b>data de entrega</b> e a <b>prioridade</b> e clique em Aprovar.</div></div>`
-      : `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Aguardando aprovação</b>Um administrador vai confirmar o prazo e a prioridade. Enquanto isso você pode ajustar o nome, a descrição e as etapas.</div></div>`;
+      : `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Aguardando aprovação</b>Um administrador vai confirmar o prazo e a prioridade. Enquanto isso você ainda pode ajustar o nome.</div></div>`;
   } else if (!isNew && approval === 'recusada') {
     note = `<div class="alert danger" style="margin-bottom:14px">${ic('alert')}<div><b>Solicitação recusada</b>${t.review_note ? esc(t.review_note) : 'Sem motivo informado.'}</div></div>`;
   } else if (!isNew && !mgr && canEd) {
@@ -1913,18 +1914,20 @@ async function openTask(id, defaults = {}) {
     <div class="drawer-body">
       <input class="title-input" id="t-title" placeholder="${isRequest ? 'O que precisa ser feito?' : 'Nome da atividade'}" value="${esc(t.title)}" ${D(canText)} />
       ${note}
+      <div ${isRequest ? 'hidden' : ''}>
       <div class="section-t" style="margin-top:4px">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Tipo e etapas</div>
       <div class="hint">O serviço é dividido em etapas. Cada etapa concluída aumenta a porcentagem de pronto.</div>
       <div class="kv" style="margin-bottom:10px"><label>Tipo de atividade</label>
         <select class="select" id="t-type" ${D(canStructure)}>${typeOpts()}</select></div>
       <div id="stage-box"></div>
+      </div>
       <div class="kv" style="margin-top:14px">
         ${isRequest ? '' : `
         <label>Status<small>Como o serviço está agora</small></label><div id="status-cell"></div>
         <label>Progresso<small>Quanto já está pronto</small></label><div id="prog-cell"></div>`}
         ${isRequest ? '' : `<label>Responsável<small>Quem faz o serviço</small></label>
         <select class="select" id="t-who" ${D(canPlan)}><option value="">— Sem responsável —</option>${memberOpts}</select>`}
-        ${isNew && isRequest ? `<label>Prazo combinado<small>Data que ficou acertada</small></label><input class="input" type="date" id="t-sdue" value="${t.suggested_due_date || ''}" />` : ''}
+        ${isNew && isRequest ? `<label>Data acordada<small>Data combinada na reunião</small></label><input class="input" type="date" id="t-sdue" value="${t.suggested_due_date || ''}" />` : ''}
         ${isRequest ? '' : `<label>Data de entrega${canReview ? ' *' : ''}<small>Até quando entregar</small></label>
         <div><input class="input" type="date" id="t-due" value="${t.due_date || (canReview ? t.suggested_due_date || '' : '')}" ${D(canPlan)} />
           ${t.suggested_due_date && !isNew ? `<div class="small muted" style="margin-top:4px">Prazo combinado/sugerido: <b>${fmtDate(t.suggested_due_date, true)}</b>${requester ? ` (por ${esc(firstName(requester.name))})` : ''}</div>` : ''}
@@ -1939,10 +1942,10 @@ async function openTask(id, defaults = {}) {
           <input class="input" id="t-holdn" placeholder="Detalhe (ex.: cliente vai enviar as cotas)" value="${esc(t.hold_note || '')}" ${D(canEd)} style="flex:2;min-width:180px;${t.hold ? '' : 'display:none'}" /></div>`}
         ${!isNew && !pending ? `<label>Passada por<small>Quem pediu o serviço</small></label><div class="person">${avatar(creator || { name: creatorName, email: t.created_by_email || '' })}<span>${esc(creatorName)}${requester ? ` <span class="muted small">(pedida por ${esc(firstName(requester.name))})</span>` : ''}</span></div>` : ''}
       </div>
-      ${isRequest || (pending && !isNew && t.requested_by_email === S.me.email) ? `<label class="du-stage" style="margin-bottom:12px"><input type="checkbox" id="t-early" ${t.started_early ? 'checked' : ''} /> Já iniciei (o serviço não pode esperar a aprovação)</label>` : ''}
-      <div class="field"><label>${isRequest ? 'Origem / o que foi combinado' : 'Origem / onde foi combinado'}</label>
-        <textarea class="textarea" id="t-origin" rows="2" placeholder="Ex.: Reunião com o cliente em 24/11 — presentes: João (cliente), Mateus" ${D(isNew || adm)}>${esc(t.origin || '')}</textarea></div>
-      <div class="field"><label>Descrição / escopo</label>
+      ${!isNew && pending && t.requested_by_email === S.me.email ? `<label class="du-stage" style="margin-bottom:12px"><input type="checkbox" id="t-early" ${t.started_early ? 'checked' : ''} /> Já iniciei (o serviço não pode esperar a aprovação)</label>` : ''}
+      <div class="field"><label>${isRequest ? 'O que foi conversado na reunião' : 'Origem / onde foi combinado'}</label>
+        <textarea class="textarea" id="t-origin" rows="${isRequest ? 5 : 2}" placeholder="${isRequest ? 'Ex.: Reunião com o cliente em 24/11 (João e Mateus). Ficou combinado enviar a documentação da P4 para liberação na plataforma.' : 'Ex.: Reunião com o cliente em 24/11 — presentes: João (cliente), Mateus'}" ${D(isNew || adm)}>${esc(t.origin || '')}</textarea></div>
+      <div class="field" ${isRequest ? 'hidden' : ''}><label>Descrição / escopo</label>
         <textarea class="textarea" id="t-desc" rows="4" placeholder="${canText ? 'Detalhes, normas, documentos de referência...' : ''}" ${D(canText)}>${esc(t.description || '')}</textarea></div>
       ${isNew ? '' : `<div id="subs-box"></div>`}
       ${isNew ? '' : `
@@ -2218,9 +2221,10 @@ async function openTask(id, defaults = {}) {
         try {
           if (isNew) {
             const base = { project_id: vals.project_id || t.project_id, title: vals.title, description: vals.description, origin: vals.origin,
-              type_id: vals.type_id ?? null, stages: vals.stages ?? null };
+              type_id: isRequest ? null : vals.type_id ?? null, stages: isRequest ? null : vals.stages ?? null };
             if (isRequest) {
-              await createTask({ ...base, suggested_due_date: $('#t-sdue', el)?.value || null, started_early: !!vals.started_early });
+              if (!$('#t-sdue', el)?.value) { toast('Informe a data acordada na reunião', 'error'); btn.disabled = false; $('#t-sdue', el)?.focus(); return; }
+              await createTask({ ...base, suggested_due_date: $('#t-sdue', el).value });
               toast('Solicitação enviada para aprovação', 'ok');
             } else {
               const extra = { assignee_id: vals.assignee_id, due_date: vals.due_date, priority: vals.priority, size: vals.size };
