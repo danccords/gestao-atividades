@@ -663,6 +663,7 @@ function renderShell() {
       <header class="topbar">
         <button class="btn btn-ghost btn-icon back" id="back" hidden>${ic('back')}</button>
         <h2 id="page-title"></h2>
+        <button class="btn btn-ghost btn-icon help-btn" id="help-btn" title="Como usar o app" aria-label="Como usar o app">?</button>
         <button class="btn btn-ghost btn-icon bell" id="bell" data-pop-anchor title="Avisos">${ic('bell')}<span class="badge" id="bell-badge" hidden></span></button>
         <button class="btn btn-ghost btn-icon only-mobile" id="me-btn" data-pop-anchor>${avatar(me)}</button>
       </header>
@@ -678,11 +679,37 @@ function renderShell() {
   </div>`;
   $('#logout').onclick = logout;
   $('#bell').onclick = (e) => openBell(e.currentTarget);
+  $('#help-btn').onclick = openHelp;
   $('#me-btn').onclick = (e) => openMeMenu(e.currentTarget);
   $('#ai-fab').onclick = toggleAssistant;
   $('#back').onclick = () => { if (S.backTo) location.hash = S.backTo; };
   bindViewEvents();
   updateChrome();
+}
+
+// Guia rápido "Como usar"
+function openHelp() {
+  const adm = isAdmin();
+  const step = (n, title, txt) => `<div class="help-step"><div class="help-n">${n}</div><div><b>${title}</b><p>${txt}</p></div></div>`;
+  const steps = adm ? [
+    ['Crie o projeto', 'Em <b>Projetos</b>, toque em <b>Novo projeto</b>. Cada obra ou cliente pode ser um projeto.'],
+    ['Passe o serviço', 'Dentro do projeto, toque em <b>Nova atividade</b>. Escolha o tipo (as etapas vêm prontas), o responsável e a data de entrega.'],
+    ['Acompanhe', 'A porcentagem sobe sozinha conforme o responsável conclui as etapas e marca as subatividades. As cores mostram o que está atrasado (vermelho) e vencendo (amarelo).'],
+    ['Decida', 'No sino aparecem as solicitações de serviço, os pedidos de novo prazo e os serviços concluídos.'],
+    ['Pergunte à IA', 'O botão roxo no canto responde perguntas como "o que está atrasado?" ou "o que o Paulo tem para hoje?".'],
+  ] : [
+    ['Veja seus serviços', 'Toque em <b>Minhas</b> (embaixo, no celular). Os atrasados aparecem primeiro, em vermelho; os que vencem logo, em amarelo.'],
+    ['Abra o serviço', 'Toque no nome do serviço para ver as etapas, as subatividades, o prazo e as anotações.'],
+    ['Marque o que fez', 'Marque as subatividades conforme for terminando. Quando todas da etapa estiverem marcadas, toque em <b>Concluir etapa</b>. A porcentagem sobe sozinha.'],
+    ['Conte como está', 'Toque no <b>+</b> ao lado do serviço (ou escreva em <b>Atualizações</b>) e diga o que fez e o que falta.'],
+    ['Precisa de algo?', 'Se estiver esperando cliente ou fornecedor, use <b>Impedimento</b>. Se precisar de mais tempo, toque em <b>Pedir novo prazo</b>.'],
+    ['Serviço novo de reunião', 'Dentro do projeto, toque em <b>Solicitar atividade</b> e informe o prazo combinado. O gestor aprova.'],
+  ];
+  openModal({
+    title: 'Como usar o app',
+    body: `<div class="help">${steps.map((x, i) => step(i + 1, x[0], x[1])).join('')}</div>`,
+    foot: `<button class="btn btn-primary" data-close>Entendi</button>`,
+  });
 }
 
 async function logout() {
@@ -1704,7 +1731,7 @@ function mountSubtasks(el, t, canEd) {
     box.innerHTML = `
       <div class="section-t">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Subatividades
         ${list.length ? `<span class="muted small" style="font-weight:500">${done} de ${list.length} concluídas</span>` : ''}</div>
-      <div class="small muted" style="margin:-4px 0 8px">${staged ? 'Cada subatividade feita avança o progresso dentro da etapa dela. A etapa só pode ser concluída quando todas as subatividades dela estiverem feitas.' : 'Com subatividades, o progresso é calculado por elas (até 99%). Para concluir, mude o status para Concluído.'}</div>
+      <div class="small muted" style="margin:-4px 0 8px">${!list.length ? 'Divida o serviço em partes menores. Cada parte marcada aumenta a porcentagem de pronto.' : staged ? 'Marque cada subatividade quando terminar. Quando todas da etapa estiverem marcadas, o botão Concluir etapa libera.' : 'A porcentagem sobe conforme você marca as subatividades. No final, mude o status para Concluído.'}</div>
       ${groups}
       ${canEd ? `<div class="sub-add"><span>${ic('plus')}</span><input id="sub-new" placeholder="Adicionar subatividade e tecle Enter" />
         ${staged ? `<select id="sub-new-stage" class="sub-stage" title="Etapa">${names.map((o) => `<option value="${esc(o)}" ${o === defStage ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>` : ''}</div>`
@@ -1872,7 +1899,7 @@ async function openTask(id, defaults = {}) {
   } else if (!isNew && approval === 'recusada') {
     note = `<div class="alert danger" style="margin-bottom:14px">${ic('alert')}<div><b>Solicitação recusada</b>${t.review_note ? esc(t.review_note) : 'Sem motivo informado.'}</div></div>`;
   } else if (!isNew && !mgr && canEd) {
-    note = `<div class="readonly-note">Atividade passada por <b>${esc(creatorName)}</b>. Você é o responsável: avance as etapas e registre as atualizações. Prazo e prioridade são definidos pelos administradores; se precisar, peça novo prazo.</div>`;
+    note = `<div class="readonly-note"><b>${esc(firstName(creatorName))}</b> passou este serviço para você. Você conclui as etapas e escreve as atualizações. O prazo é definido pelo gestor; se precisar de mais tempo, toque em <b>Pedir novo prazo</b>.</div>`;
   } else if (!isNew && !canEd) {
     note = `<div class="readonly-note">${lockIc} Atividade passada por <b>${esc(creatorName)}</b>${assignee ? ` para <b>${esc(assignee.name)}</b>` : ''}. Somente ${assignee ? 'o responsável e os administradores podem' : 'os administradores podem'} alterar ou comentar.</div>`;
   }
@@ -1887,29 +1914,30 @@ async function openTask(id, defaults = {}) {
       <input class="title-input" id="t-title" placeholder="${isRequest ? 'O que precisa ser feito?' : 'Nome da atividade'}" value="${esc(t.title)}" ${D(canText)} />
       ${note}
       <div class="section-t" style="margin-top:4px">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Tipo e etapas</div>
+      <div class="hint">O serviço é dividido em etapas. Cada etapa concluída aumenta a porcentagem de pronto.</div>
       <div class="kv" style="margin-bottom:10px"><label>Tipo de atividade</label>
         <select class="select" id="t-type" ${D(canStructure)}>${typeOpts()}</select></div>
       <div id="stage-box"></div>
       <div class="kv" style="margin-top:14px">
         ${isRequest ? '' : `
-        <label>Status</label><div id="status-cell"></div>
-        <label>Progresso</label><div id="prog-cell"></div>`}
-        ${isRequest ? '' : `<label>Responsável</label>
+        <label>Status<small>Como o serviço está agora</small></label><div id="status-cell"></div>
+        <label>Progresso<small>Quanto já está pronto</small></label><div id="prog-cell"></div>`}
+        ${isRequest ? '' : `<label>Responsável<small>Quem faz o serviço</small></label>
         <select class="select" id="t-who" ${D(canPlan)}><option value="">— Sem responsável —</option>${memberOpts}</select>`}
-        ${isNew && isRequest ? `<label>Prazo combinado</label><input class="input" type="date" id="t-sdue" value="${t.suggested_due_date || ''}" />` : ''}
-        ${isRequest ? '' : `<label>Data de entrega${canReview ? ' *' : ''}</label>
+        ${isNew && isRequest ? `<label>Prazo combinado<small>Data que ficou acertada</small></label><input class="input" type="date" id="t-sdue" value="${t.suggested_due_date || ''}" />` : ''}
+        ${isRequest ? '' : `<label>Data de entrega${canReview ? ' *' : ''}<small>Até quando entregar</small></label>
         <div><input class="input" type="date" id="t-due" value="${t.due_date || (canReview ? t.suggested_due_date || '' : '')}" ${D(canPlan)} />
           ${t.suggested_due_date && !isNew ? `<div class="small muted" style="margin-top:4px">Prazo combinado/sugerido: <b>${fmtDate(t.suggested_due_date, true)}</b>${requester ? ` (por ${esc(firstName(requester.name))})` : ''}</div>` : ''}
           <div id="due-req-box"></div></div>
-        <label>Prioridade</label>
+        <label>Prioridade<small>Urgência do serviço</small></label>
         <select class="select" id="t-prio" ${D(canPlan)}>${Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${t.priority === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
-        <label>Tamanho</label>
+        <label>Tamanho<small>Pequeno, médio ou grande</small></label>
         <select class="select" id="t-size" ${D(canPlan)} title="Peso da atividade no progresso do projeto">${Object.entries(SIZES).map(([k, v]) => `<option value="${k}" ${(t.size || 'M') === k ? 'selected' : ''}>${v.label} (peso ${v.w})</option>`).join('')}</select>`}
         ${canPlan ? `<label>Projeto</label><select class="select" id="t-proj">${projOpts}</select>` : ''}
-        ${isNew ? '' : `<label>Impedimento</label>
+        ${isNew ? '' : `<label>Impedimento<small>Está esperando alguém ou algo?</small></label>
         <div style="display:flex;gap:6px;flex-wrap:wrap"><select class="select" id="t-hold" ${D(canEd)} style="flex:1;min-width:160px">${Object.entries(HOLDS).map(([k, v]) => `<option value="${k}" ${(t.hold || '') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
           <input class="input" id="t-holdn" placeholder="Detalhe (ex.: cliente vai enviar as cotas)" value="${esc(t.hold_note || '')}" ${D(canEd)} style="flex:2;min-width:180px;${t.hold ? '' : 'display:none'}" /></div>`}
-        ${!isNew && !pending ? `<label>Passada por</label><div class="person">${avatar(creator || { name: creatorName, email: t.created_by_email || '' })}<span>${esc(creatorName)}${requester ? ` <span class="muted small">(pedida por ${esc(firstName(requester.name))})</span>` : ''}</span></div>` : ''}
+        ${!isNew && !pending ? `<label>Passada por<small>Quem pediu o serviço</small></label><div class="person">${avatar(creator || { name: creatorName, email: t.created_by_email || '' })}<span>${esc(creatorName)}${requester ? ` <span class="muted small">(pedida por ${esc(firstName(requester.name))})</span>` : ''}</span></div>` : ''}
       </div>
       ${isRequest || (pending && !isNew && t.requested_by_email === S.me.email) ? `<label class="du-stage" style="margin-bottom:12px"><input type="checkbox" id="t-early" ${t.started_early ? 'checked' : ''} /> Já iniciei (o serviço não pode esperar a aprovação)</label>` : ''}
       <div class="field"><label>${isRequest ? 'Origem / o que foi combinado' : 'Origem / onde foi combinado'}</label>
@@ -1919,6 +1947,7 @@ async function openTask(id, defaults = {}) {
       ${isNew ? '' : `<div id="subs-box"></div>`}
       ${isNew ? '' : `
         <div class="section-t">${ic('msg').replace('<svg', '<svg width="16" height="16"')} Atualizações e comentários</div>
+        <div class="hint">Escreva aqui o que foi feito e o que falta. Todo mundo que acompanha o serviço consegue ler.</div>
         ${canEd ? `<div class="comment-form">
           <textarea class="textarea" id="c-body" placeholder="O que foi feito hoje e o que falta fazer... (Ctrl+Enter envia)"></textarea>
           <button class="btn btn-primary btn-icon" id="c-send" title="Enviar">${ic('send')}</button>
@@ -1940,6 +1969,23 @@ async function openTask(id, defaults = {}) {
     onClose: () => { S.onCommentsChanged = null; S.onSubsChanged = null; S.onTaskChanged = null; S.onDueChanged = null; },
     onMount: ({ el, close }) => {
       const rerenderSubs = isNew ? null : mountSubtasks(el, t, canEd);
+      // campos que a pessoa não pode alterar aparecem como texto (e não como caixa cinza)
+      const roify = () => $$('.kv select:disabled, .kv input:disabled, select#t-type:disabled, .field textarea:disabled', el).forEach((x) => {
+        if (x.dataset.ro || x.style.display === 'none') return;
+        x.dataset.ro = '1';
+        let txt = '';
+        if (x.tagName === 'SELECT') txt = x.selectedOptions[0]?.text || '—';
+        else if (x.type === 'date') txt = x.value ? parseDate(x.value).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Sem data';
+        else txt = x.value || '—';
+        txt = txt.replace(/^— (.*) —$/, '$1');
+        const d = document.createElement('div');
+        d.className = 'ro-val' + (x.tagName === 'TEXTAREA' ? ' ro-multi' : '');
+        d.textContent = txt;
+        x.style.display = 'none';
+        x.after(d);
+      });
+      new MutationObserver(roify).observe(el, { childList: true, subtree: true });
+      setTimeout(roify, 0);
       // ---------- estado das etapas no painel ----------
       let draftStages = hasStages(t) ? t.stages.map((x) => ({ ...x })) : null;   // etapas em edição (nova/estrutura)
       let editing = isNew;                                                         // editor aberto direto só ao criar

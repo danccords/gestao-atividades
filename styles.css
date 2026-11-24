@@ -748,3 +748,24 @@ a { color: var(--primary); text-decoration: none; }
 .sg-tag.ok { background: var(--ok-soft); color: var(--ok); }
 .sg-tag.cur { background: var(--primary-soft); color: var(--primary); }
 .sub-add .sub-stage { height: 30px; font-size: 12.5px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-2); max-width: 45%; }
+
+/* Leitura mais fácil */
+.hint { font-size: 13px; color: var(--text-2); margin: -4px 0 10px; line-height: 1.45; }
+.kv > label small { display: block; font-size: 11.5px; font-weight: 400; color: var(--text-3); margin-top: 1px; }
+.ro-val { font-size: 15px; font-weight: 500; color: var(--text); padding: 6px 0; }
+.ro-val.ro-multi { font-weight: 400; white-space: pre-wrap; line-height: 1.5; }
+.kv > label { font-size: 14px; }
+.section-t { font-size: 15px; }
+.readonly-note { font-size: 14px; line-height: 1.5; }
+.help-btn { font-weight: 700; font-size: 17px; width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--border-strong); color: var(--text-2); }
+.help { display: flex; flex-direction: column; gap: 14px; }
+.help-step { display: flex; gap: 12px; align-items: flex-start; }
+.help-n { flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.help-step b { font-size: 15.5px; }
+.help-step p { margin: 3px 0 0; font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
+@media (max-width: 860px) {
+  body { font-size: 16px; }
+  .kv > label { font-size: 14.5px; }
+  .ro-val { font-size: 16px; }
+  .hint { font-size: 14px; }
+}
