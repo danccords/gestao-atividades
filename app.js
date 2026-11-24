@@ -46,7 +46,7 @@ const EMOJIS = ['📄', '📝', '📌', '✅', '💡', '📐', '📏', '🏗️'
 // ---------------------------------------------------------------------
 const S = {
   session: null, me: null, started: false, recovery: false,
-  members: [], projects: [], tasks: [], commentCounts: {}, lastUpdate: {},
+  members: [], projects: [], tasks: [], commentCounts: {}, lastUpdate: {}, subtasks: [],
   notes: null, channel: null, pop: null, leaveHook: null,
   ui: { projects: {}, mine: { who: 'me', q: '' }, showArchived: false, collapsed: {} },
   prefs: loadPrefs(),
@@ -497,15 +497,17 @@ async function afterLogin() {
 // Dados
 // ---------------------------------------------------------------------
 async function loadAll() {
-  const [members, projects, tasks, comments] = await Promise.all([
+  const [members, projects, tasks, comments, subtasks] = await Promise.all([
     q(sb.from('team_members').select('*').order('name')),
     q(sb.from('projects').select('*').order('created_at')),
     q(sb.from('tasks').select('*').order('created_at')),
     fetchLastUpdates(),
+    sb.from('subtasks').select('*').order('position').order('created_at').then(({ data }) => data || []),
   ]);
   S.members = members || [];
   S.projects = projects || [];
   S.tasks = tasks || [];
+  S.subtasks = subtasks || [];
   countComments(comments || []);
   const meNow = S.members.find((m) => m.id === S.me.id);
   if (meNow) S.me = meNow;
@@ -582,6 +584,7 @@ function setupRealtime() {
   S.channel = sb.channel('equipe-db')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => applyChange(S.tasks, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (p) => applyChange(S.projects, p))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, (p) => { applyChange(S.subtasks, p); S.onSubsChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'task_comments' }, onCommentChange)
     .subscribe();
 }
@@ -835,6 +838,15 @@ function whoCell(t) {
   return canPlanTask(t) ? `<div data-act="who" data-pop-anchor style="cursor:pointer;min-width:0;width:100%">${inner}</div>` : inner;
 }
 
+// Subatividades
+const subsOf = (taskId) => S.subtasks.filter((x) => x.task_id === taskId).sort((a, b) => (a.position - b.position) || a.created_at.localeCompare(b.created_at));
+function subChip(t) {
+  const list = subsOf(t.id);
+  if (!list.length) return '';
+  const done = list.filter((x) => x.done).length;
+  return `<span class="sub-chip ${done === list.length ? 'all' : ''}" data-act="open" title="Subatividades concluídas">${ic('checksq')}${done}/${list.length}</span>`;
+}
+
 // Última atualização escrita na atividade (aparece na lista) + aviso de "sem atualização"
 function updateLine(t, compact = false) {
   if (!isApproved(t)) return '';
@@ -868,6 +880,7 @@ function taskRow(t, { color, showProject }) {
         ${showProject && p ? `<div class="task-proj"><i style="background:${esc(p.color)}"></i>${esc(p.name)}</div>` : ''}
         ${updateLine(t)}
       </div>
+      ${subChip(t)}
       ${cc ? `<span class="cmt-count">${ic('msg')}${cc}</span>` : ''}
       <span data-act="open" style="display:flex;cursor:pointer">${ic('open', 'open-ic')}</span>
     </div>
@@ -1181,6 +1194,7 @@ function viewProject(id, isRefresh) {
             <div class="t" data-act="open">${esc(t.title)}</div>
             ${updateLine(t, true)}
             ${progBar(t, false)}
+            ${subChip(t) ? `<div style="margin-top:6px">${subChip(t)}</div>` : ''}
             <div class="m">${dueChip(t, false)}<span class="person">${avatar(m)}</span></div>
           </div>`;
         }).join('')}
@@ -1313,6 +1327,106 @@ function bindKanban() {
 // ---------------------------------------------------------------------
 // Painel de detalhes da atividade
 // ---------------------------------------------------------------------
+// Lista de subatividades dentro do painel da atividade
+function mountSubtasks(el, t, canEd) {
+  const box = $('#subs-box', el);
+  if (!box) return;
+  const members = S.members.filter((m) => m.active);
+  const syncProgress = async () => {
+    const list = subsOf(t.id);
+    if (!list.length || !canEditTask(t) || !isApproved(t)) return;
+    const pct = Math.round((list.filter((x) => x.done).length / list.length) * 100);
+    const cur = task(t.id) || t;
+    if (pct !== cur.progress) {
+      await updateTask(t.id, { progress: pct });
+    }
+    Object.assign(t, task(t.id) || {});
+    const r = $('#t-prog', el), st = $('#t-status', el);
+    if (r) { r.value = t.progress; $('#t-progv', el).textContent = t.progress + '%'; }
+    if (st) st.value = t.status;
+  };
+  const render = () => {
+    const list = subsOf(t.id);
+    const done = list.filter((x) => x.done).length;
+    box.innerHTML = `
+      <div class="section-t">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Subatividades
+        ${list.length ? `<span class="muted small" style="font-weight:500">${done} de ${list.length} concluídas</span>` : ''}</div>
+      ${list.length ? `<div class="prog" style="margin:-2px 0 10px"><div class="bar"><i class="${done === list.length ? 'full' : ''}" style="width:${Math.round(done / list.length * 100)}%"></i></div></div>` : ''}
+      <div class="subs">
+        ${list.map((x) => {
+          const m = member(x.assignee_id);
+          const late = !x.done && x.due_date && daysUntil(x.due_date) < 0;
+          return `<div class="sub ${x.done ? 'done' : ''}" data-sid="${x.id}">
+            <input type="checkbox" class="sub-ck" ${x.done ? 'checked' : ''} ${canEd ? '' : 'disabled'} />
+            <div class="sub-main">
+              <input class="sub-title" value="${esc(x.title)}" ${canEd ? '' : 'disabled'} />
+              <div class="sub-meta">
+                <select class="sub-who" ${canEd ? '' : 'disabled'} title="Responsável pela etapa">
+                  <option value="">Sem responsável</option>
+                  ${members.map((mm) => `<option value="${mm.id}" ${mm.id === x.assignee_id ? 'selected' : ''}>${esc(mm.name)}</option>`).join('')}
+                  ${m && !m.active ? `<option value="${m.id}" selected>${esc(m.name)}</option>` : ''}
+                </select>
+                <input type="date" class="sub-due ${late ? 'late' : ''}" value="${x.due_date || ''}" ${canEd ? '' : 'disabled'} title="Prazo da etapa" />
+              </div>
+            </div>
+            ${canEd ? `<button class="btn btn-ghost btn-icon btn-sm sub-del" title="Excluir etapa">${ic('x')}</button>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      ${canEd ? `<div class="sub-add"><span>${ic('plus')}</span><input id="sub-new" placeholder="Adicionar subatividade e tecle Enter" /></div>`
+        : (list.length ? '' : '<div class="muted small">Nenhuma subatividade.</div>')}`;
+
+    $$('.sub', box).forEach((row) => {
+      const x = S.subtasks.find((s) => s.id === row.dataset.sid);
+      if (!x) return;
+      const save = async (patch) => {
+        try {
+          const r = await q(sb.from('subtasks').update(patch).eq('id', x.id).select().single());
+          upsertLocal(S.subtasks, r);
+        } catch (e) { toastErr(e); }
+      };
+      $('.sub-ck', row)?.addEventListener('change', async (e) => {
+        const d = e.target.checked;
+        Object.assign(x, { done: d });
+        row.classList.toggle('done', d);
+        await save({ done: d, done_at: d ? new Date().toISOString() : null });
+        render(); refresh();
+        await syncProgress();
+      });
+      $('.sub-title', row)?.addEventListener('change', (e) => { const v = e.target.value.trim(); if (v) save({ title: v }); else e.target.value = x.title; });
+      $('.sub-title', row)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+      $('.sub-who', row)?.addEventListener('change', (e) => save({ assignee_id: e.target.value || null }));
+      $('.sub-due', row)?.addEventListener('change', (e) => save({ due_date: e.target.value || null }).then(render));
+      $('.sub-del', row)?.addEventListener('click', async () => {
+        try {
+          await q(sb.from('subtasks').delete().eq('id', x.id));
+          S.subtasks = S.subtasks.filter((s) => s.id !== x.id);
+          render(); refresh();
+          await syncProgress();
+        } catch (e) { toastErr(e); }
+      });
+    });
+    const inp = $('#sub-new', box);
+    inp?.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const title = inp.value.trim();
+      if (!title) return;
+      inp.disabled = true;
+      try {
+        const pos = Math.max(0, ...subsOf(t.id).map((x) => x.position)) + 1;
+        const r = await q(sb.from('subtasks').insert({ task_id: t.id, title, position: pos }).select().single());
+        upsertLocal(S.subtasks, r);
+        render(); refresh();
+        await syncProgress();
+        $('#sub-new', box)?.focus();
+      } catch (ex) { toastErr(ex); inp.disabled = false; }
+    });
+  };
+  render();
+  S.onSubsChanged = () => { if (!box.contains(document.activeElement)) render(); };
+}
+
 // Atualização rápida do dia: o que fez, o que falta e o progresso
 function dailyUpdate(t) {
   openModal({
@@ -1417,6 +1531,7 @@ async function openTask(id, defaults = {}) {
       </div>`}
       <div class="field"><label>Descrição / escopo</label>
         <textarea class="textarea" id="t-desc" rows="5" placeholder="${canText ? 'Detalhes, normas, documentos de referência...' : ''}" ${D(canText)}>${esc(t.description || '')}</textarea></div>
+      ${isNew ? '' : `<div id="subs-box"></div>`}
       ${isNew ? '' : `
         <div class="section-t">${ic('msg').replace('<svg', '<svg width="16" height="16"')} Atualizações e comentários</div>
         ${canEd ? `<div class="comment-form">
@@ -1436,8 +1551,9 @@ async function openTask(id, defaults = {}) {
   openModal({
     drawer: true,
     body,
-    onClose: () => { S.onCommentsChanged = null; },
+    onClose: () => { S.onCommentsChanged = null; S.onSubsChanged = null; },
     onMount: ({ el, close }) => {
+      if (!isNew) mountSubtasks(el, t, canEd);
       const prog = $('#t-prog', el);
       const st = $('#t-status', el);
       if (prog && st) {
@@ -2230,9 +2346,9 @@ async function fetchAll(table) {
 }
 async function exportBackup() {
   try {
-    const [team_members, projects, tasks, task_comments] = await Promise.all(
-      ['team_members', 'projects', 'tasks', 'task_comments'].map(fetchAll));
-    const data = { app: 'gestao-atividades', tipo: 'equipe', versao: 1, criado_em: new Date().toISOString(), criado_por: S.me.email, data: { team_members, projects, tasks, task_comments } };
+    const [team_members, projects, tasks, task_comments, subtasks] = await Promise.all(
+      ['team_members', 'projects', 'tasks', 'task_comments', 'subtasks'].map(fetchAll));
+    const data = { app: 'gestao-atividades', tipo: 'equipe', versao: 2, criado_em: new Date().toISOString(), criado_por: S.me.email, data: { team_members, projects, tasks, task_comments, subtasks } };
     downloadJson(data, `backup-atividades-${todayStr()}.json`);
     localStorage.setItem(BACKUP_KEY, new Date().toISOString());
     toast(`Backup baixado: ${projects.length} projetos, ${tasks.length} atividades`, 'ok');

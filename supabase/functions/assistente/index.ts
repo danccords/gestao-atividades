@@ -65,12 +65,15 @@ Deno.serve(async (req) => {
     if (!history.length || history[history.length - 1].role !== 'user') return json({ error: 'bad_request' }, 400);
 
     // ---------- dados que ESSA pessoa pode ver ----------
-    const [meR, membersR, projectsR, tasksR] = await Promise.all([
+    const [meR, membersR, projectsR, tasksR, subsR] = await Promise.all([
       sb.from('team_members').select('*').eq('email', email).maybeSingle(),
       sb.from('team_members').select('id, name, email, role, active, job_title'),
       sb.from('projects').select('id, name, description, archived'),
       sb.from('tasks').select('*'),
+      sb.from('subtasks').select('task_id, title, done, assignee_id, due_date, position').order('position'),
     ]);
+    const subsByTask: Record<string, { title: string; done: boolean; assignee_id: string | null; due_date: string | null }[]> = {};
+    for (const x of subsR.data || []) (subsByTask[x.task_id] ||= []).push(x);
     const me = meR.data;
     if (!me || !me.active) return json({ error: 'forbidden' }, 403);
     const members = membersR.data || [];
@@ -124,6 +127,15 @@ Deno.serve(async (req) => {
         const who = memberByEmail[l.author_email]?.name || l.author_email;
         parts.push(`última atualização (${who}, ${fmt(l.created_at)}): ${clip(String(l.body).replace(/\s+/g, ' '), 220)}`);
       } else if (t.status !== 'concluido') parts.push('última atualização: nenhuma');
+      const subs = subsByTask[t.id];
+      if (subs?.length) {
+        const doneN = subs.filter((x) => x.done).length;
+        const items = subs.slice(0, 12).map((x) => {
+          const r = x.assignee_id ? memberById[x.assignee_id]?.name : '';
+          return `${x.done ? '[feito]' : '[falta]'} ${clip(x.title, 60)}${r ? ` (${r})` : ''}${x.due_date && !x.done ? ` até ${fmt(x.due_date)}` : ''}`;
+        });
+        parts.push(`subatividades ${doneN}/${subs.length} feitas: ${items.join('; ')}${subs.length > 12 ? '; …' : ''}`);
+      }
       if (t.description) parts.push(`descrição: ${clip(String(t.description).replace(/\s+/g, ' '), 160)}`);
       return '- ' + parts.join(' | ');
     });

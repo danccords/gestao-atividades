@@ -30,6 +30,8 @@ App web (funciona no computador e no celular) para organizar projetos e atividad
 - Essas regras são aplicadas **no banco de dados** (não só na tela).
 - As anotações são privadas de verdade: nem o administrador consegue ler as de outra pessoa.
 
+**Subatividades**: dentro de cada atividade dá para criar etapas (com responsável e prazo opcionais). Quando a atividade tem etapas, o progresso é calculado sozinho pela proporção de etapas concluídas. Só quem passou a atividade e o responsável criam e marcam etapas.
+
 Automação: colocar o progresso em 100% marca como *Concluído* (e vice-versa). Sair de 0% muda de *Não iniciado* para *Em andamento*.
 
 ---
