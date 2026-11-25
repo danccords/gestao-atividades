@@ -78,6 +78,8 @@ const P = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   trash: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
@@ -652,6 +654,7 @@ function renderShell() {
       <nav class="nav">
         <a href="#/inicio" data-nav="inicio">${ic('home')} Projetos</a>
         <a href="#/minhas" data-nav="minhas">${ic('check')} Minhas atividades <span class="count" id="nav-count" hidden></span></a>
+        <a href="#/calendario" data-nav="calendario">${ic('calendar')} Calendário</a>
         <a href="#/notas" data-nav="notas">${ic('note')} Anotações</a>
         ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')} Equipe</a>
         <a href="#/modelos" data-nav="modelos">${ic('checksq')} Modelos de etapas</a>` : ''}
@@ -668,6 +671,7 @@ function renderShell() {
       <header class="topbar">
         <button class="btn btn-ghost btn-icon back" id="back" hidden>${ic('back')}</button>
         <h2 id="page-title"></h2>
+        <button class="btn btn-ghost btn-icon theme-btn" id="theme-btn" title="Modo noturno" aria-label="Alternar modo noturno">${ic(isDark() ? 'sun' : 'moon')}</button>
         <button class="btn btn-ghost btn-icon help-btn" id="help-btn" title="Como usar o app" aria-label="Como usar o app">?</button>
         <button class="btn btn-ghost btn-icon bell" id="bell" data-pop-anchor title="Avisos">${ic('bell')}<span class="badge" id="bell-badge" hidden></span></button>
         <button class="btn btn-ghost btn-icon only-mobile" id="me-btn" data-pop-anchor>${avatar(me)}</button>
@@ -678,6 +682,7 @@ function renderShell() {
     <nav class="bottomnav">
       <a href="#/inicio" data-nav="inicio">${ic('home')}<span>Projetos</span></a>
       <a href="#/minhas" data-nav="minhas">${ic('check')}<span>Minhas</span><span class="count" id="bn-count" hidden></span></a>
+      <a href="#/calendario" data-nav="calendario">${ic('calendar')}<span>Calendário</span></a>
       <a href="#/notas" data-nav="notas">${ic('note')}<span>Anotações</span></a>
       ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')}<span>Equipe</span></a>` : ''}
     </nav>
@@ -685,11 +690,162 @@ function renderShell() {
   $('#logout').onclick = logout;
   $('#bell').onclick = (e) => openBell(e.currentTarget);
   $('#help-btn').onclick = openHelp;
+  $('#theme-btn').onclick = () => {
+    setTheme(isDark() ? 'light' : 'dark');
+    $('#theme-btn').innerHTML = ic(isDark() ? 'sun' : 'moon');
+    $('#theme-btn').title = isDark() ? 'Modo claro' : 'Modo noturno';
+  };
   $('#me-btn').onclick = (e) => openMeMenu(e.currentTarget);
   $('#ai-fab').onclick = toggleAssistant;
   $('#back').onclick = () => { if (S.backTo) location.hash = S.backTo; };
   bindViewEvents();
   updateChrome();
+}
+
+// Modo noturno
+function isDark() { return document.documentElement.dataset.theme === 'dark'; }
+function setTheme(mode) {
+  document.documentElement.dataset.theme = mode;
+  try { localStorage.setItem('ga-theme', mode); } catch {}
+  const mc = document.querySelector('meta[name="theme-color"]');
+  if (mc) mc.content = mode === 'dark' ? '#181b34' : '#1d4ed8';
+}
+
+// ---------------------------------------------------------------------
+// CALENDÁRIO (mês e linha do tempo)
+// ---------------------------------------------------------------------
+const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const WEEKDAYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const dayDiff = (a, b) => Math.round((new Date(b.getFullYear(), b.getMonth(), b.getDate()) - new Date(a.getFullYear(), a.getMonth(), a.getDate())) / 86400000);
+function taskStart(t) {
+  const s = t.approved_at || t.created_at;
+  return s ? new Date(new Date(s).toDateString()) : (t.due_date ? parseDate(t.due_date) : new Date());
+}
+function viewCalendar() {
+  setTitle('Calendário');
+  document.title = `Calendário · ${APP_NAME}`;
+  const now = new Date();
+  const c = (S.cal ||= { y: now.getFullYear(), m: now.getMonth(), mode: S.prefs.calMode || 'mes', proj: '', who: '', day: ymd(now) });
+  const projs = S.projects.filter((p) => !p.archived);
+  const tasks = S.tasks.filter((t) => isApproved(t) && activeProject(t) && (!c.proj || t.project_id === c.proj) && (!c.who || (c.who === 'me' ? t.assignee_id === S.me.id : t.assignee_id === c.who)));
+  const pColor = (t) => project(t.project_id)?.color || '#1d4ed8';
+  const head = `
+    <div class="cal-head">
+      <div class="cal-nav">
+        <button class="btn btn-icon" id="cal-prev" title="Mês anterior">${ic('back')}</button>
+        <h3>${MONTHS[c.m]} ${c.y}</h3>
+        <button class="btn btn-icon" id="cal-next" title="Próximo mês" style="transform:scaleX(-1)">${ic('back')}</button>
+        <button class="btn btn-sm" id="cal-today">Hoje</button>
+      </div>
+      <div class="cal-filters">
+        <select class="select" id="cal-proj"><option value="">Todos os projetos</option>${projs.map((p) => `<option value="${p.id}" ${c.proj === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+        <select class="select" id="cal-who"><option value="">Todos os responsáveis</option><option value="me" ${c.who === 'me' ? 'selected' : ''}>Somente eu</option>
+          ${S.members.filter((m) => m.active).map((m) => `<option value="${m.id}" ${c.who === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
+        <div class="seg">
+          <button class="${c.mode === 'mes' ? 'active' : ''}" data-cmode="mes">${ic('calendar')} Mês</button>
+          <button class="${c.mode === 'linha' ? 'active' : ''}" data-cmode="linha">${ic('kanban')} Linha do tempo</button>
+        </div>
+      </div>
+    </div>`;
+  const body = c.mode === 'linha' ? calTimeline(c, tasks, pColor) : calMonth(c, tasks, pColor);
+  $('#view').innerHTML = `<div class="cal">${head}${body}</div>`;
+  const go = (dm) => { let m = c.m + dm, y = c.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } c.m = m; c.y = y; viewCalendar(); };
+  $('#cal-prev').onclick = () => go(-1);
+  $('#cal-next').onclick = () => go(1);
+  $('#cal-today').onclick = () => { c.y = now.getFullYear(); c.m = now.getMonth(); c.day = ymd(now); viewCalendar(); };
+  $('#cal-proj').onchange = (e) => { c.proj = e.target.value; viewCalendar(); };
+  $('#cal-who').onchange = (e) => { c.who = e.target.value; viewCalendar(); };
+  $$('[data-cmode]').forEach((b) => (b.onclick = () => { c.mode = b.dataset.cmode; S.prefs.calMode = c.mode; savePrefs(); viewCalendar(); }));
+  $$('#view [data-day]').forEach((x) => (x.onclick = (e) => { if (e.target.closest('[data-task]')) return; c.day = x.dataset.day; viewCalendar(); }));
+  $$('#view [data-task]').forEach((x) => (x.onclick = (e) => { e.stopPropagation(); openTask(x.dataset.task); }));
+  if (c.mode === 'linha') {
+    const sc = $('#tl-scroll');
+    const tl = sc?.querySelector('.tl-today');
+    if (sc && tl) sc.scrollLeft = Math.max(0, tl.offsetLeft - sc.querySelector('.tl-lbl').offsetWidth - 7 * 28);   // hoje com 1 semana antes à vista
+  }
+}
+function calMonth(c, tasks, pColor) {
+  const first = new Date(c.y, c.m, 1);
+  const start = addDays(first, -((first.getDay() + 6) % 7));
+  const last = new Date(c.y, c.m + 1, 0);
+  const weeks = Math.ceil((dayDiff(start, last) + 1) / 7);
+  const today = ymd(new Date());
+  const byDay = {};
+  for (const t of tasks) if (t.due_date) (byDay[t.due_date] ||= []).push(t);
+  const chip = (t) => `<div class="cal-chip ${dueState(t)}" data-task="${t.id}" style="--pc:${pColor(t)}" title="${esc(t.title)} — ${esc(project(t.project_id)?.name || '')}${member(t.assignee_id) ? ' · ' + esc(member(t.assignee_id).name) : ''}">${esc(t.title)}</div>`;
+  let cells = '';
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = addDays(start, i), k = ymd(d), list = (byDay[k] || []).sort((a, b) => a.status === 'concluido' ? 1 : -1);
+    const late = list.some((t) => dueState(t) === 'late');
+    cells += `<div class="cal-cell ${d.getMonth() !== c.m ? 'out' : ''} ${k === today ? 'today' : ''} ${k === c.day ? 'sel' : ''} ${i % 7 >= 5 ? 'wk' : ''}" data-day="${k}">
+      <div class="cal-dn">${d.getDate()}${list.length ? `<span class="cal-n ${late ? 'late' : ''}">${list.length}</span>` : ''}</div>
+      <div class="cal-chips">${list.slice(0, 3).map(chip).join('')}${list.length > 3 ? `<div class="cal-more">+${list.length - 3} mais</div>` : ''}</div>
+    </div>`;
+  }
+  const sel = (byDay[c.day] || []);
+  const selD = parseDate(c.day);
+  const noDue = tasks.filter((t) => !t.due_date && t.status !== 'concluido').length;
+  return `
+    <div class="cal-grid">${WEEKDAYS.map((w) => `<div class="cal-wd">${w}</div>`).join('')}${cells}</div>
+    <div class="cal-day">
+      <div class="section-t">${selD.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}</div>
+      ${sel.length ? sel.map((t) => `<div class="cal-row" data-task="${t.id}">
+          <span class="cal-dot" style="background:${pColor(t)}"></span>
+          <div class="cal-row-tx"><b>${esc(t.title)}</b><span>${esc(project(t.project_id)?.name || '')}${member(t.assignee_id) ? ' · ' + esc(member(t.assignee_id).name) : ''}</span></div>
+          <span class="cal-row-st" style="background:${(STATUS[t.status] || STATUS.nao_iniciado).color}">${t.progress}%</span>
+        </div>`).join('') : '<div class="muted small">Nenhuma entrega neste dia.</div>'}
+      ${noDue ? `<div class="muted small" style="margin-top:10px">${noDue} atividade${noDue > 1 ? 's' : ''} sem data de entrega não aparece${noDue > 1 ? 'm' : ''} no calendário.</div>` : ''}
+    </div>`;
+}
+function calTimeline(c, tasks, pColor) {
+  const DW = 28;
+  const start = new Date(c.y, c.m, 1);
+  const end = new Date(c.y, c.m + 3, 0);   // 3 meses
+  const nDays = dayDiff(start, end) + 1;
+  const W = nDays * DW;
+  const today = new Date();
+  const ti = dayDiff(start, today);
+  const pos = (d) => Math.max(0, Math.min(nDays, dayDiff(start, d)));
+  let days = '', months = '';
+  for (let i = 0; i < nDays; i++) {
+    const d = addDays(start, i);
+    days += `<div class="tl-d ${d.getDay() % 6 === 0 ? 'wk' : ''} ${i === ti ? 'td' : ''}" style="left:${i * DW}px">${d.getDate()}</div>`;
+    if (d.getDate() === 1) months += `<div class="tl-m" style="left:${i * DW}px">${MONTHS[d.getMonth()]} ${d.getFullYear()}</div>`;
+  }
+  const bar = (t) => {
+    if (!t.due_date) return '';
+    const s0 = taskStart(t), e0 = parseDate(t.due_date);
+    const a = s0 > e0 ? e0 : s0;
+    if (e0 < start || a > end) return '';
+    const l = pos(a), r = pos(e0) + 1;
+    const st = dueState(t);
+    return `<div class="tl-bar ${st}" data-task="${t.id}" style="left:${l * DW}px;width:${Math.max(1, r - l) * DW - 4}px;--sc:${(STATUS[t.status] || STATUS.nao_iniciado).color}" title="${esc(t.title)} · ${fmtDate(ymd(a))} → ${fmtDate(t.due_date)} · ${t.progress}%"><i style="width:${t.progress}%"></i><span>${t.progress}%</span></div>`;
+  };
+  const groups = S.projects.filter((p) => !p.archived && (!c.proj || p.id === c.proj)).map((p) => {
+    const list = tasks.filter((t) => t.project_id === p.id).sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+    if (!list.length) return '';
+    const dated = list.filter((t) => t.due_date);
+    let pbar = '';
+    if (dated.length) {
+      const a = dated.map(taskStart).reduce((x, y) => (y < x ? y : x));
+      const b = dated.map((t) => parseDate(t.due_date)).reduce((x, y) => (y > x ? y : x));
+      const prog = Math.round(list.reduce((sum, t) => sum + t.progress * (SIZES[t.size]?.w || 2), 0) / list.reduce((sum, t) => sum + (SIZES[t.size]?.w || 2), 0));
+      if (!(b < start || a > end)) {
+        const l = pos(a), r = pos(b) + 1;
+        pbar = `<div class="tl-pbar" style="left:${l * DW}px;width:${Math.max(1, r - l) * DW - 4}px;--pc:${p.color}" title="${esc(p.name)} · ${fmtDate(ymd(a))} → ${fmtDate(ymd(b))} · ${prog}%"><i style="width:${prog}%"></i><span>${prog}%</span></div>`;
+      }
+    }
+    return `<div class="tl-row tl-proj"><div class="tl-lbl"><span class="cal-dot" style="background:${p.color}"></span><b>${esc(p.name)}</b></div><div class="tl-track" style="width:${W}px">${pbar}</div></div>
+      ${list.map((t) => `<div class="tl-row"><div class="tl-lbl" data-task="${t.id}"><span>${esc(t.title)}</span><small>${member(t.assignee_id) ? esc(firstName(member(t.assignee_id).name)) : '—'}${t.due_date ? '' : ' · sem prazo'}</small></div><div class="tl-track" style="width:${W}px">${bar(t)}</div></div>`).join('')}`;
+  }).join('');
+  return `<div class="tl-wrap"><div class="tl-scroll" id="tl-scroll">
+      <div class="tl-row tl-headrow"><div class="tl-lbl tl-corner">Projeto / atividade</div><div class="tl-track tl-scale" style="width:${W}px">${months}${days}</div></div>
+      <div class="tl-body">${groups || '<div class="muted small" style="padding:16px">Nenhuma atividade para mostrar.</div>'}
+        ${ti >= 0 && ti < nDays ? `<div class="tl-today" style="left:calc(var(--tl-lbl) + ${ti * DW + DW / 2}px)"></div>` : ''}
+      </div></div></div>
+    <div class="muted small" style="margin-top:8px">A barra vai de quando a atividade foi passada até a data de entrega; o preenchimento mostra quanto está pronto. Linha vermelha = hoje.</div>`;
 }
 
 // Guia rápido "Como usar"
@@ -873,6 +1029,7 @@ function renderView(r, isRefresh) {
     case 'notas': return viewNotes(r.id);
     case 'equipe': if (!isAdmin()) { location.hash = '#/inicio'; return; } return viewTeam();
     case 'modelos': return viewModels();
+    case 'calendario': return viewCalendar();
     default: return viewHome();
   }
 }

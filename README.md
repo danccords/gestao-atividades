@@ -168,3 +168,7 @@ supabase/
 - **Novidades nos seus serviços**: quando outra pessoa (ex.: o gestor) adiciona uma subatividade ou escreve um aviso/comentário num serviço seu, você recebe aviso no sino, na tela e no aparelho (se as notificações estiverem ativadas).
 - **Modelos de anotação**: "Nova página" oferece Ata de reunião, Relatório de visita técnica e Checklist de inspeção.
 - **PDF**: o botão **PDF** da anotação abre a impressão com cabeçalho da empresa; escolha "Salvar como PDF".
+
+## Calendário e modo noturno
+- **Calendário** (menu lateral e menu de baixo no celular): visão **Mês**, com as entregas de cada dia, e **Linha do tempo**, com o macro de cada projeto (barra do projeto e das atividades, do dia em que foi passada até a entrega, com % pronto e linha de hoje). Filtros por projeto e responsável.
+- **Modo noturno**: botão de lua/sol no topo. A escolha fica salva no aparelho.
