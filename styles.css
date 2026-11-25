@@ -252,7 +252,7 @@ a { color: var(--primary); text-decoration: none; }
 .group-head .n { color: var(--text-3); font-weight: 500; font-size: 13px; }
 .tbl { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .tr {
-  display: grid; grid-template-columns: minmax(220px, 1fr) 170px 150px 140px 160px 110px;
+  display: grid; grid-template-columns: minmax(220px, 1fr) 170px 145px 160px 150px 105px;
   align-items: stretch; border-top: 1px solid var(--border); min-height: 44px; position: relative;
 }
 .tr::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--gc, transparent); }
@@ -264,7 +264,7 @@ a { color: var(--primary); text-decoration: none; }
 .tr.th .td { justify-content: center; }
 .tr.th .td:first-child { justify-content: flex-start; }
 .td.c { justify-content: center; }
-.task-title { font-weight: 500; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.task-title { font-weight: 500; cursor: pointer; overflow: hidden; flex: 1; min-width: 0; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .task-title:hover { color: var(--primary); }
 .task-proj { font-size: 11.5px; color: var(--text-3); display: flex; align-items: center; gap: 5px; margin-top: 2px; }
 .task-proj i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
@@ -285,12 +285,12 @@ a { color: var(--primary); text-decoration: none; }
 
 .pill {
   width: 100%; height: 32px; border: 0; border-radius: 4px; color: #fff; font-weight: 600; font-size: 12.5px;
-  display: flex; align-items: center; justify-content: center; padding: 0 6px; text-align: center;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block; line-height: 32px; padding: 0 8px; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 .pill.editable { cursor: pointer; }
 .pill.editable:hover { filter: brightness(.95); }
-.pill.sm { height: 24px; font-size: 11.5px; width: auto; padding: 0 10px; border-radius: 12px; display: inline-flex; }
+.pill.sm { height: 24px; font-size: 11.5px; width: auto; padding: 0 10px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 
 .due { font-size: 13px; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 12px; white-space: nowrap; }
 .due.late { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
@@ -299,7 +299,12 @@ a { color: var(--primary); text-decoration: none; }
 .due.none { color: var(--text-3); }
 .due.pend { background: var(--warn-soft); color: var(--warn); font-weight: 600; font-size: 12px; padding: 3px 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .due.pend svg { flex: none; }
-.due svg { width: 14px; height: 14px; }
+.due svg { width: 14px; height: 14px; flex: none; }
+.tr .td.col-due { padding: 0 8px; }
+.h-short { display: none; }
+.tr .col-due .due { gap: 5px; padding: 3px 8px; }
+.due { max-width: 100%; min-width: 0; }
+.due > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 .prog { display: flex; align-items: center; gap: 8px; width: 100%; }
 .prog.editable { cursor: pointer; }
@@ -522,7 +527,8 @@ a { color: var(--primary); text-decoration: none; }
    ===================================================================== */
 @media (max-width: 1100px) {
   .team-row { grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 1fr) 160px 150px 60px 120px; }
-  .tr { grid-template-columns: minmax(200px, 1fr) 140px 140px 130px 140px; }
+  .tr { grid-template-columns: minmax(200px, 1fr) 64px 135px 156px 100px; }
+  .task-title { -webkit-line-clamp: 3; }
   .tr .td.col-prio { display: none; }
 }
 
@@ -771,3 +777,11 @@ a { color: var(--primary); text-decoration: none; }
   .ro-val { font-size: 16px; }
   .hint { font-size: 14px; }
 }
+
+@media (min-width: 861px) and (max-width: 1100px) {
+  .tr .col-who .person > span:not(.avatar) { display: none; }
+  .h-long { display: none; }
+  .h-short { display: inline !important; }
+}
+/* etapa no status: quebra em 2 linhas em vez de cortar */
+.pill.pill-stage { white-space: normal; line-height: 1.15; font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; padding: 0 6px; height: auto; min-height: 32px; max-height: 40px; display: flex; align-items: center; justify-content: center; }

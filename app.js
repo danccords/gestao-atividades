@@ -876,10 +876,10 @@ function prioPill(t, editable) {
   return `<button class="pill sm ${editable ? 'editable' : ''}" ${editable ? 'data-act="prio" data-pop-anchor' : 'tabindex="-1"'} style="background:${p.color}">${p.label}</button>`;
 }
 function dueChip(t, editable) {
-  if (approvalOf(t) === 'pendente') return `<span class="due pend" title="Aguardando aprovação${t.suggested_due_date ? ' · data acordada: ' + fmtDate(t.suggested_due_date, true) : ''}">${ic('clock')}Em aprovação</span>`;
+  if (approvalOf(t) === 'pendente') return `<span class="due pend" title="Aguardando aprovação${t.suggested_due_date ? ' · data acordada: ' + fmtDate(t.suggested_due_date, true) : ''}">${ic('clock')}<span>Em aprovação</span></span>`;
   if (approvalOf(t) === 'recusada') return `<span class="due late">${ic('x')}Recusada</span>`;
   const st = dueState(t);
-  return `<span class="due ${st}" ${editable ? 'data-act="due" data-pop-anchor style="cursor:pointer"' : ''} title="${t.due_date ? fmtDate(t.due_date, true) : ''}">${ic('calendar')}${esc(dueText(t))}</span>`;
+  return `<span class="due ${st}" ${editable ? 'data-act="due" data-pop-anchor style="cursor:pointer"' : ''} title="${t.due_date ? fmtDate(t.due_date, true) : ''}">${ic('calendar')}<span>${esc(dueText(t))}</span></span>`;
 }
 function progBar(t, editable) {
   return `<div class="prog ${editable ? 'editable' : ''}" ${editable ? 'data-act="progress" data-pop-anchor' : ''}>
@@ -940,7 +940,7 @@ function taskRow(t, { color, showProject }) {
   <div class="tr" data-id="${t.id}" style="--gc:${color}">
     <div class="td">
       <div style="min-width:0;flex:1">
-        <div class="task-title" data-act="open">${esc(t.title)}</div>
+        <div class="task-title" data-act="open" title="${esc(t.title)}">${esc(t.title)}</div>
         ${showProject && p ? `<div class="task-proj"><i style="background:${esc(p.color)}"></i>${esc(p.name)}</div>` : ''}
         ${updateLine(t)}
       </div>
@@ -966,7 +966,7 @@ function renderGroups(groups, { showProject = false, allowAdd = false, scope = '
       <div class="group-head" data-collapse="${esc(ckey)}">${ic('chev', 'chev')}<span>${esc(g.label)}</span><span class="n">${g.tasks.length} ${g.tasks.length === 1 ? 'atividade' : 'atividades'}</span></div>
       <div class="tbl">
         <div class="tr th" style="--gc:${g.color}">
-          <div class="td">Atividade</div><div class="td">Responsável</div><div class="td">Status</div>
+          <div class="td">Atividade</div><div class="td"><span class="h-long">Responsável</span><span class="h-short">Resp.</span></div><div class="td">Status</div>
           <div class="td">Prazo</div><div class="td">Progresso</div><div class="td col-prio">Prioridade</div>
         </div>
         ${g.tasks.map((t) => taskRow(t, { color: g.color, showProject })).join('')}
@@ -1234,9 +1234,9 @@ function stagePill(t) {
   let label, color;
   if (all) { label = 'Concluído'; color = STATUS.concluido.color; }
   else if (pend >= 0) { label = `Confirmar: ${list[pend].name}`; color = STATUS.em_revisao.color; }
-  else if (next === 0) { label = `A iniciar · ${list[0].name}`; color = STATUS.nao_iniciado.color; }
+  else if (next === 0) { label = `${list[0].name}`; color = STATUS.nao_iniciado.color; }
   else { label = `${list[next].name}`; color = STATUS.em_andamento.color; }
-  return `<button class="pill editable" data-act="open" style="background:${color}" title="${esc(label)} — ${t.progress}%">${esc(label)}</button>`;
+  return `<button class="pill editable pill-stage" data-act="open" style="background:${color}" title="${next === 0 && !all ? 'A iniciar: ' : ''}${esc(label)} — ${t.progress}%">${esc(label)}</button>`;
 }
 
 // Decisões que estão esperando por mim (aprovar, confirmar etapa, novo prazo)
@@ -1643,7 +1643,7 @@ function viewProject(id, isRefresh) {
         <option value="_open" ${ui.st === '_open' ? 'selected' : ''}>Em aberto</option>
         ${STATUS_ORDER.map((k) => `<option value="${k}" ${ui.st === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}
       </select>
-      ${mode === 'table' ? `<select class="select" id="f-group">
+      ${true ? `<select class="select" id="f-group" ${mode === 'table' ? '' : 'style="visibility:hidden" tabindex="-1" aria-hidden="true"'}>
         <option value="status" ${groupBy === 'status' ? 'selected' : ''}>Agrupar: Status</option>
         <option value="pessoa" ${groupBy === 'pessoa' ? 'selected' : ''}>Agrupar: Responsável</option>
       </select>` : ''}
