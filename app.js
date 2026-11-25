@@ -3127,5 +3127,13 @@ async function importNotes(file) {
 // Service worker (permite instalar no celular como app)
 // ---------------------------------------------------------------------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    // procura versão nova ao abrir e sempre que o app volta para a tela
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+  // quando uma versão nova é instalada, recarrega uma vez para usá-la
+  if (navigator.serviceWorker.controller) {
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded) { reloaded = true; location.reload(); } });
+  }
 }
