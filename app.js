@@ -101,6 +101,8 @@ const P = {
   send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
   spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
 };
 const ic = (name, cls = '') =>
   `<svg class="${cls}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${P[name]}</svg>`;
@@ -185,7 +187,8 @@ const task = (id) => S.tasks.find((t) => t.id === id);
 
 function avatar(m, cls = '') {
   if (!m) return `<span class="avatar avatar-empty ${cls}" title="Sem responsável">${ic('user')}</span>`;
-  return `<span class="avatar ${cls}" style="background:${hashColor(m.email)}" title="${esc(m.name)}">${esc(initials(m.name))}</span>`;
+  if (m.avatar_url && /^data:image\/(jpeg|png|webp);base64,/.test(m.avatar_url)) return `<span class="avatar has-img ${cls}" title="${esc(m.name)}"><img src="${m.avatar_url}" alt="" /></span>`;
+  return `<span class="avatar ${cls}" style="background:${m.avatar_color || hashColor(m.email)}" title="${esc(m.name)}">${esc(initials(m.name))}</span>`;
 }
 // Aprovação: atividades criadas por colaboradores ficam "pendente" até um admin aprovar
 const approvalOf = (t) => t.approval || 'aprovada';
@@ -592,6 +595,7 @@ function setupRealtime() {
   S.channel = sb.channel('equipe-db')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => { checkFinished(p); checkAssigned(p); applyChange(S.tasks, p); S.onTaskChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (p) => applyChange(S.projects, p))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, (p) => { applyChange(S.members, p); if (p.new?.id === S.me?.id) Object.assign(S.me, p.new); scheduleRefresh(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_types' }, (p) => applyChange(S.types, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'due_requests' }, (p) => { applyChange(S.dueRequests, p); S.onDueChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, (p) => { checkFeedSub(p); applyChange(S.subtasks, p); S.onSubsChanged?.(); })
@@ -663,7 +667,7 @@ function renderShell() {
       <div class="nav-projects" id="nav-projects"></div>
       <div class="userbox">
         ${avatar(me, 'lg')}
-        <div class="info"><b>${esc(me.name)}</b><span>${me.role === 'admin' ? 'Administrador' : 'Colaborador'}</span></div>
+        <a class="info" href="#/perfil" title="Meu perfil"><b>${esc(me.name)}</b><span>${me.job_title ? esc(me.job_title) : me.role === 'admin' ? 'Administrador' : 'Colaborador'} · Meu perfil</span></a>
         <button class="btn btn-ghost btn-icon" id="logout" title="Sair">${ic('logout')}</button>
       </div>
     </aside>
@@ -700,6 +704,112 @@ function renderShell() {
   $('#back').onclick = () => { if (S.backTo) location.hash = S.backTo; };
   bindViewEvents();
   updateChrome();
+}
+
+// ---------------------------------------------------------------------
+// MEU PERFIL
+// ---------------------------------------------------------------------
+// reduz a foto para 160x160 (fica leve, guardada junto do cadastro)
+function resizeImage(file, size = 160) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const k = Math.min(img.width, img.height);
+      c.getContext('2d').drawImage(img, (img.width - k) / 2, (img.height - k) / 2, k, k, 0, 0, size, size);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não foi possível ler esta imagem.')); };
+    img.src = url;
+  });
+}
+function viewProfile() {
+  setTitle('Meu perfil');
+  document.title = `Meu perfil · ${APP_NAME}`;
+  const me = S.me;
+  const adm = isAdmin();
+  const draft = { name: me.name, avatar_color: me.avatar_color || hashColor(me.email), avatar_url: me.avatar_url || null, phone: me.phone || '', job_title: me.job_title || '' };
+  const preview = () => avatar({ ...me, ...draft }, 'xl');
+  $('#view').innerHTML = `
+    <div class="profile">
+      <div class="card prof-card">
+        <div class="prof-top">
+          <div id="pf-av">${preview()}</div>
+          <div class="prof-photo-btns">
+            <label class="btn btn-sm">${ic('upload')} Trocar foto<input type="file" id="pf-file" accept="image/*" hidden /></label>
+            <button class="btn btn-sm btn-ghost" id="pf-rmphoto" ${draft.avatar_url ? '' : 'hidden'}>Remover foto</button>
+            <div class="small muted">A foto aparece para toda a equipe.</div>
+          </div>
+        </div>
+        <div class="field"><label>Nome</label><input class="input" id="pf-name" value="${esc(draft.name)}" maxlength="60" /></div>
+        <div class="field"><label>Cor (aparece quando não há foto)</label>
+          <div class="color-pick" id="pf-colors">${PERSON_COLORS.map((c) => `<button type="button" class="cp ${c === draft.avatar_color ? 'on' : ''}" data-c="${c}" style="background:${c}" aria-label="Cor ${c}"></button>`).join('')}</div></div>
+        <div class="field"><label>Telefone / WhatsApp</label><input class="input" id="pf-phone" value="${esc(draft.phone)}" placeholder="(11) 99999-9999" maxlength="30" /></div>
+        <div class="kv" style="margin-top:6px">
+          <label>Cargo</label>
+          ${adm ? `<input class="input" id="pf-job" value="${esc(draft.job_title)}" placeholder="Ex.: Engenheiro, Projetista" maxlength="60" />`
+                : `<div class="ro-val">${esc(draft.job_title || '—')} <span class="small muted" style="font-weight:400">· definido pelo administrador</span></div>`}
+          <label>E-mail</label><div class="ro-val">${esc(me.email)}</div>
+          <label>Acesso</label><div class="ro-val">${adm ? 'Administrador' : 'Colaborador'}</div>
+        </div>
+        <div class="prof-actions"><button class="btn btn-primary" id="pf-save">Salvar perfil</button></div>
+      </div>
+
+      <div class="card prof-card">
+        <div class="section-t">${ic('lock').replace('<svg', '<svg width="16" height="16"')} Trocar senha</div>
+        <div class="field"><label>Nova senha</label><input class="input" type="password" id="pf-p1" autocomplete="new-password" minlength="6" /></div>
+        <div class="field"><label>Repita a nova senha</label><input class="input" type="password" id="pf-p2" autocomplete="new-password" minlength="6" /></div>
+        <div class="err" id="pf-perr"></div>
+        <div class="prof-actions"><button class="btn" id="pf-pass">Trocar senha</button></div>
+      </div>
+
+      <div class="card prof-card">
+        <div class="section-t">${ic('settings').replace('<svg', '<svg width="16" height="16"')} Preferências deste aparelho</div>
+        <div class="pref-row"><div><b>Modo noturno</b><span class="small muted">Fundo escuro, mais confortável à noite</span></div>
+          <label class="switch"><input type="checkbox" id="pf-dark" ${isDark() ? 'checked' : ''} /><span></span></label></div>
+        <div class="pref-row"><div><b>Notificações</b><span class="small muted">${'Notification' in window ? (Notification.permission === 'granted' ? 'Ativadas neste aparelho' : Notification.permission === 'denied' ? 'Bloqueadas nas configurações do navegador' : 'Desativadas') : 'Não suportadas neste navegador'}</span></div>
+          ${'Notification' in window && Notification.permission === 'default' ? '<button class="btn btn-sm" id="pf-notif">Ativar</button>' : ''}</div>
+      </div>
+    </div>`;
+  const repaint = () => { $('#pf-av').innerHTML = preview(); $('#pf-rmphoto').hidden = !draft.avatar_url; };
+  $('#pf-name').oninput = (e) => { draft.name = e.target.value; repaint(); };
+  $$('#pf-colors .cp').forEach((b) => (b.onclick = () => {
+    draft.avatar_color = b.dataset.c;
+    $$('#pf-colors .cp').forEach((x) => x.classList.toggle('on', x === b));
+    repaint();
+  }));
+  $('#pf-file').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try { draft.avatar_url = await resizeImage(f); repaint(); toast('Foto pronta. Toque em "Salvar perfil".'); } catch (err) { toastErr(err); }
+  };
+  $('#pf-rmphoto').onclick = () => { draft.avatar_url = null; repaint(); };
+  $('#pf-save').onclick = async () => {
+    const name = $('#pf-name').value.trim();
+    if (name.length < 2) { toast('Informe seu nome', 'error'); return; }
+    const patch = { name, avatar_color: draft.avatar_color, avatar_url: draft.avatar_url, phone: $('#pf-phone').value.trim() };
+    if (adm && $('#pf-job')) patch.job_title = $('#pf-job').value.trim();
+    const btn = $('#pf-save'); btn.disabled = true;
+    try {
+      const row = await q(sb.from('team_members').update(patch).eq('id', me.id).select().single());
+      Object.assign(S.me, row); upsertLocal(S.members, row);
+      renderShell(); viewProfile();
+      toast('Perfil salvo', 'ok');
+    } catch (e) { toastErr(e); btn.disabled = false; }
+  };
+  $('#pf-pass').onclick = async () => {
+    const p1 = $('#pf-p1').value, p2 = $('#pf-p2').value, err = $('#pf-perr');
+    err.textContent = '';
+    if (p1.length < 6) { err.textContent = 'A senha precisa ter pelo menos 6 caracteres.'; return; }
+    if (p1 !== p2) { err.textContent = 'As duas senhas não são iguais.'; return; }
+    try { await q(sb.auth.updateUser({ password: p1 })); $('#pf-p1').value = $('#pf-p2').value = ''; toast('Senha trocada', 'ok'); }
+    catch (e) { err.textContent = e.message || 'Não foi possível trocar a senha.'; }
+  };
+  $('#pf-dark').onchange = (e) => { setTheme(e.target.checked ? 'dark' : 'light'); const tb = $('#theme-btn'); if (tb) tb.innerHTML = ic(isDark() ? 'sun' : 'moon'); };
+  $('#pf-notif')?.addEventListener('click', async () => { await requestNotif(); viewProfile(); });
 }
 
 // Modo noturno
@@ -967,10 +1077,12 @@ function openMeMenu(anchor) {
   openPopover(anchor, `
     <div style="display:flex;gap:10px;align-items:center;padding:6px 6px 10px">${avatar(S.me, 'lg')}
       <div style="min-width:0"><b style="display:block">${esc(S.me.name)}</b><span class="muted small">${esc(S.me.email)}</span></div></div>
+    <button class="menu-item" id="m-prof">${ic('user')} Meu perfil</button>
     ${perm === 'default' ? `<button class="menu-item" id="m-notif">${ic('bell')} Ativar notificações</button>` : ''}
     <button class="menu-item" id="m-out" style="color:var(--danger)">${ic('logout')} Sair</button>`,
   (el) => {
     $('#m-out', el).onclick = () => { closePopover(); logout(); };
+    $('#m-prof', el).onclick = () => { closePopover(); location.hash = '#/perfil'; };
     const n = $('#m-notif', el);
     if (n) n.onclick = () => { closePopover(); requestNotif(); };
   }, { width: 260 });
@@ -1030,6 +1142,7 @@ function renderView(r, isRefresh) {
     case 'equipe': if (!isAdmin()) { location.hash = '#/inicio'; return; } return viewTeam();
     case 'modelos': return viewModels();
     case 'calendario': return viewCalendar();
+    case 'perfil': return viewProfile();
     default: return viewHome();
   }
 }

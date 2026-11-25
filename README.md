@@ -172,3 +172,6 @@ supabase/
 ## Calendário e modo noturno
 - **Calendário** (menu lateral e menu de baixo no celular): visão **Mês**, com as entregas de cada dia, e **Linha do tempo**, com o macro de cada projeto (barra do projeto e das atividades, do dia em que foi passada até a entrega, com % pronto e linha de hoje). Filtros por projeto e responsável.
 - **Modo noturno**: botão de lua/sol no topo. A escolha fica salva no aparelho.
+
+## Meu perfil
+Clique no seu nome (menu lateral) ou na sua foto (celular) → **Meu perfil**: nome, foto, cor, telefone, trocar senha, modo noturno e notificações. O **cargo**, o e-mail e o tipo de acesso só podem ser alterados por administradores (o banco bloqueia).
