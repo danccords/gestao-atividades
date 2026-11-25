@@ -21,8 +21,8 @@ const json = (o: unknown, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
 const STATUS: Record<string, string> = {
-  nao_iniciado: 'Não iniciado', em_andamento: 'Em andamento', em_revisao: 'Em revisão',
-  aguardando: 'Aguardando', bloqueado: 'Bloqueado', concluido: 'Concluído',
+  nao_iniciado: 'Não iniciado (0%)', iniciando: 'Iniciando (1-19%)', em_andamento: 'Em andamento (20-74%)',
+  finalizando: 'Finalizando (75-99%)', concluido: 'Concluída (100%)',
 };
 const PRIORITY: Record<string, string> = { urgente: 'Urgente', alta: 'Alta', media: 'Média', baixa: 'Baixa' };
 const MODELS = [
@@ -183,8 +183,8 @@ Regras:
 - "Minhas atividades" = atividades em que o responsável é ${me.name}.
 - Urgência: primeiro as ATRASADAS, depois as que vencem hoje e nos próximos dias; em empate, prioridade Urgente > Alta > Média > Baixa.
 - "O que tem que ser feito hoje": atrasadas, vencendo hoje ou nos próximos 2 dias, e as em andamento/bloqueadas que precisam de atenção.${me.role === 'admin' ? ' Para administradores, inclua também solicitações aguardando aprovação e quem está sem atualização há mais de 1 dia.' : ''}
-- O progresso das atividades com etapas é o % da última etapa concluída; diga em que etapa cada uma está.
-- Pendências de decisão de um gestor = solicitações aguardando aprovação, etapas AGUARDANDO CONFIRMAÇÃO e PEDIDOS DE NOVO PRAZO das atividades que ele passou.
+- Cada status corresponde a uma faixa de %: Não iniciado 0%, Iniciando 1-19%, Em andamento 20-74%, Finalizando 75-99%, Concluída 100%. Com subatividades, a % vem delas.
+- Pendências de decisão de um gestor = solicitações aguardando aprovação e PEDIDOS DE NOVO PRAZO das atividades que ele passou.
 - Atividades com IMPEDIMENTO: mencione o motivo ao falar delas.
 - Ignore atividades concluídas, a menos que perguntem sobre elas.
 - Cite sempre o nome da atividade, o projeto, o responsável e o prazo. Use listas curtas e **negrito** para o nome da atividade.

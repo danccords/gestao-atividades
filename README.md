@@ -178,3 +178,9 @@ Clique no seu nome (menu lateral) ou na sua foto (celular) → **Meu perfil**: n
 
 ## Painel do gestor (somente administradores)
 Menu **Painel** (no celular: toque na sua foto → Painel do gestor). Números gerais (abertas, atrasadas, vencendo, concluídas em 30 dias, aguardando aprovação) e gráficos: quanto cada projeto está pronto, situação das atividades por projeto, carga de trabalho por pessoa, entregas previstas por semana e lista das atrasadas. Filtros por projeto e por pessoa; passe o mouse (ou toque) nas barras para ver os números.
+
+
+## Status pela porcentagem (atualização 13 — substitui as etapas)
+As etapas foram desativadas. Cada atividade tem um status com a sua faixa de %:
+**Não iniciado** 0% · **Iniciando** 1–19% · **Em andamento** 20–74% · **Finalizando** 75–99% · **Concluída** 100%.
+Mudou a %, o status acompanha; escolheu um status, a % vai para a faixa dele. Com subatividades, a % vem delas (feitas ÷ total, até 99%) e a pessoa marca **Concluída** no final. Item novo ou desmarcado numa atividade concluída reabre a atividade.

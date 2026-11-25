@@ -20,15 +20,18 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 // ---------------------------------------------------------------------
 // Constantes
 // ---------------------------------------------------------------------
+// Status pela porcentagem (igual ao Monday): cada status tem a sua faixa de %
 const STATUS = {
-  nao_iniciado: { label: 'Não iniciado', color: '#a8adba' },
-  em_andamento: { label: 'Em andamento', color: '#fdab3d' },
-  em_revisao:   { label: 'Em revisão',   color: '#a25ddc' },
-  aguardando:   { label: 'Aguardando',   color: '#579bfc' },
-  bloqueado:    { label: 'Bloqueado',    color: '#e2445c' },
-  concluido:    { label: 'Concluído',    color: '#00c875' },
+  nao_iniciado: { label: 'Não iniciado', color: '#a8adba', min: 0,   max: 0,   def: 0 },
+  iniciando:    { label: 'Iniciando',    color: '#579bfc', min: 1,   max: 19,  def: 10 },
+  em_andamento: { label: 'Em andamento', color: '#fdab3d', min: 20,  max: 74,  def: 50 },
+  finalizando:  { label: 'Finalizando',  color: '#a25ddc', min: 75,  max: 99,  def: 85 },
+  concluido:    { label: 'Concluída',    color: '#00c875', min: 100, max: 100, def: 100 },
 };
-const STATUS_ORDER = ['em_andamento', 'aguardando', 'em_revisao', 'bloqueado', 'nao_iniciado', 'concluido'];
+const STATUS_ORDER = ['nao_iniciado', 'iniciando', 'em_andamento', 'finalizando', 'concluido'];
+const statusForProgress = (p) => (p >= 100 ? 'concluido' : p >= 75 ? 'finalizando' : p >= 20 ? 'em_andamento' : p >= 1 ? 'iniciando' : 'nao_iniciado');
+const progressForStatus = (st, cur = 0) => { const s = STATUS[st]; return !s ? cur : cur >= s.min && cur <= s.max ? cur : s.def; };
+const statusRange = (k) => (STATUS[k].min === STATUS[k].max ? `${STATUS[k].min}%` : `${STATUS[k].min}–${STATUS[k].max}%`);
 const PRIORITY = {
   urgente: { label: 'Urgente', color: '#e2445c' },
   alta:    { label: 'Alta',    color: '#fdab3d' },
@@ -561,12 +564,10 @@ async function updateTask(id, patch) {
   const t = task(id);
   if (!t) return;
   // automações de status/progresso
-  if ('progress' in patch && !('status' in patch)) {
-    if (patch.progress === 100 && t.status !== 'concluido') patch.status = 'concluido';
-    else if (patch.progress > 0 && patch.progress < 100 && t.status === 'nao_iniciado') patch.status = 'em_andamento';
-    else if (patch.progress < 100 && t.status === 'concluido') patch.status = 'em_andamento';
-  }
-  if (patch.status === 'concluido' && !('progress' in patch)) patch.progress = 100;
+  // status e % andam juntos: mudou a %, o status acompanha; escolheu o status, a % vai para a faixa dele
+  if ('progress' in patch && !('status' in patch)) patch.status = statusForProgress(patch.progress);
+  else if ('status' in patch && !('progress' in patch) && !subsOf(id).length) patch.progress = progressForStatus(patch.status, t.progress);
+  else if ('status' in patch && subsOf(id).length) patch.progress = patch.status === 'concluido' ? 100 : t.progress;
   const prev = { ...t };
   Object.assign(t, patch);
   refresh();
@@ -663,7 +664,7 @@ function renderShell() {
         ${me.role === 'admin' ? `<a href="#/painel" data-nav="painel">${ic('chart')} Painel</a>` : ''}
         <a href="#/notas" data-nav="notas">${ic('note')} Anotações</a>
         ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')} Equipe</a>
-        <a href="#/modelos" data-nav="modelos">${ic('checksq')} Modelos de etapas</a>` : ''}
+` : ''}
       </nav>
       <div class="nav-section">Projetos</div>
       <div class="nav-projects" id="nav-projects"></div>
@@ -1151,14 +1152,15 @@ function openHelp() {
   const step = (n, title, txt) => `<div class="help-step"><div class="help-n">${n}</div><div><b>${title}</b><p>${txt}</p></div></div>`;
   const steps = adm ? [
     ['Crie o projeto', 'Em <b>Projetos</b>, toque em <b>Novo projeto</b>. Cada obra ou cliente pode ser um projeto.'],
-    ['Passe o serviço', 'Dentro do projeto, toque em <b>Nova atividade</b>. Escolha o tipo (as etapas vêm prontas), o responsável e a data de entrega.'],
-    ['Acompanhe', 'A porcentagem sobe sozinha conforme o responsável conclui as etapas e marca as subatividades. As cores mostram o que está atrasado (vermelho) e vencendo (amarelo).'],
+    ['Passe o serviço', 'Dentro do projeto, toque em <b>Nova atividade</b>. Informe o responsável, a data de entrega e a prioridade. Se quiser, divida em subatividades.'],
+    ['Acompanhe', 'Cada status tem a sua porcentagem: <b>Não iniciado</b> 0%, <b>Iniciando</b> 1–19%, <b>Em andamento</b> 20–74%, <b>Finalizando</b> 75–99% e <b>Concluída</b> 100%. As cores mostram o que está atrasado (vermelho) e vencendo (amarelo).'],
     ['Decida', 'No sino aparecem as solicitações de serviço, os pedidos de novo prazo e os serviços concluídos.'],
+    ['Veja o geral', 'O <b>Painel</b> mostra gráficos de todos os projetos e a carga de cada pessoa; o <b>Calendário</b> mostra as entregas.'],
     ['Pergunte à IA', 'O botão roxo no canto responde perguntas como "o que está atrasado?" ou "o que o Paulo tem para hoje?".'],
   ] : [
     ['Veja seus serviços', 'Toque em <b>Minhas</b> (embaixo, no celular). Os atrasados aparecem primeiro, em vermelho; os que vencem logo, em amarelo.'],
-    ['Abra o serviço', 'Toque no nome do serviço para ver as etapas, as subatividades, o prazo e as anotações.'],
-    ['Marque o que fez', 'Marque as subatividades conforme for terminando. Quando todas da etapa estiverem marcadas, toque em <b>Concluir etapa</b>. A porcentagem sobe sozinha.'],
+    ['Abra o serviço', 'Toque no nome do serviço para ver o status, as subatividades, o prazo e as anotações.'],
+    ['Atualize o andamento', 'Escolha o status (ou arraste a porcentagem): <b>Iniciando</b> 1–19%, <b>Em andamento</b> 20–74%, <b>Finalizando</b> 75–99%, <b>Concluída</b> 100%. Se houver subatividades, é só marcá-las: a porcentagem sobe sozinha.'],
     ['Conte como está', 'Toque no <b>+</b> ao lado do serviço (ou escreva em <b>Atualizações</b>) e diga o que fez e o que falta.'],
     ['Precisa de algo?', 'Se estiver esperando cliente ou fornecedor, use <b>Impedimento</b>. Se precisar de mais tempo, toque em <b>Pedir novo prazo</b>.'],
     ['Serviço novo de reunião', 'Dentro do projeto, toque em <b>Solicitar atividade</b> e informe o prazo combinado. O gestor aprova.'],
@@ -1329,7 +1331,7 @@ function renderView(r, isRefresh) {
     case 'minhas': return viewMine();
     case 'notas': return viewNotes(r.id);
     case 'equipe': if (!isAdmin()) { location.hash = '#/inicio'; return; } return viewTeam();
-    case 'modelos': return viewModels();
+    case 'modelos': return (location.hash = '#/inicio');
     case 'calendario': return viewCalendar();
     case 'perfil': return viewProfile();
     case 'painel': return isAdmin() ? viewDashboard() : (location.hash = '#/inicio');
@@ -1504,9 +1506,9 @@ function bindViewEvents() {
 
 function popStatus(anchor, t) {
   const el = openPopover(anchor, `<div class="opt-list">${STATUS_ORDER.map((k) =>
-    `<button class="pill editable" data-v="${k}" style="background:${STATUS[k].color}">${STATUS[k].label}</button>`).join('')}</div>`,
+    `<button class="pill editable pill-range" data-v="${k}" style="background:${STATUS[k].color}">${STATUS[k].label}<small>${statusRange(k)}</small></button>`).join('')}</div>`,
   (el) => $$('[data-v]', el).forEach((b) => (b.onclick = () => { closePopover(); updateTask(t.id, { status: b.dataset.v }); })),
-  { width: 210 });
+  { width: 230 });
   el.anchor = anchor;
 }
 function popPriority(anchor, t) {
@@ -1518,12 +1520,12 @@ function popPriority(anchor, t) {
 }
 function popProgress(anchor, t) {
   const el = openPopover(anchor, `
-    <div class="ttl">Progresso: <b id="pv">${t.progress}%</b></div>
+    <div class="ttl">Progresso: <b id="pv">${t.progress}%</b> · <span id="ps">${STATUS[statusForProgress(t.progress)].label}</span></div>
     <input type="range" min="0" max="100" step="5" value="${t.progress}" id="pr" />
-    <div class="quick">${[0, 25, 50, 75, 100].map((v) => `<button data-v="${v}">${v}%</button>`).join('')}</div>`,
+    <div class="quick">${[0, 10, 50, 85, 100].map((v) => `<button data-v="${v}" title="${STATUS[statusForProgress(v)].label}">${v}%</button>`).join('')}</div>`,
   (el) => {
     const r = $('#pr', el);
-    r.oninput = () => ($('#pv', el).textContent = r.value + '%');
+    r.oninput = () => { $('#pv', el).textContent = r.value + '%'; $('#ps', el).textContent = STATUS[statusForProgress(Number(r.value))].label; };
     r.onchange = () => updateTask(t.id, { progress: Number(r.value) });
     $$('[data-v]', el).forEach((b) => (b.onclick = () => { closePopover(); updateTask(t.id, { progress: Number(b.dataset.v) }); }));
   }, { width: 250 });
@@ -1567,7 +1569,7 @@ const HOLDS = {
   bloqueado: 'Bloqueado',
 };
 const SIZES = { P: { label: 'Pequena', w: 1 }, M: { label: 'Média', w: 2 }, G: { label: 'Grande', w: 3 } };
-const hasStages = (t) => Array.isArray(t?.stages) && t.stages.length > 0;
+const hasStages = () => false;   // etapas desativadas: só status + % e subatividades
 const typeById = (id) => S.types.find((x) => x.id === id);
 const activeTypes = () => S.types.filter((x) => x.active).sort((a, b) => (a.position - b.position) || a.name.localeCompare(b.name));
 
@@ -2302,7 +2304,7 @@ function mountSubtasks(el, t, canEd) {
     box.innerHTML = `
       <div class="section-t">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Subatividades
         ${list.length ? `<span class="muted small" style="font-weight:500">${done} de ${list.length} concluídas</span>` : ''}</div>
-      <div class="small muted" style="margin:-4px 0 8px">${!list.length ? 'Divida o serviço em partes menores. Cada parte marcada aumenta a porcentagem de pronto.' : staged ? 'Marque cada subatividade quando terminar. Quando todas da etapa estiverem marcadas, o botão Concluir etapa libera.' : 'A porcentagem sobe conforme você marca as subatividades. No final, mude o status para Concluído.'}</div>
+      <div class="small muted" style="margin:-4px 0 8px">${!list.length ? 'Divida o serviço em partes menores. Com subatividades, a porcentagem e o status passam a ser calculados por elas.' : staged ? 'Marque cada subatividade quando terminar. Quando todas da etapa estiverem marcadas, o botão Concluir etapa libera.' : 'A porcentagem sobe conforme você marca as subatividades (até 99%). No final, mude o status para Concluída.'}</div>
       ${groups}
       ${canEd ? `<div class="sub-add"><span>${ic('plus')}</span><input id="sub-new" placeholder="Adicionar subatividade e tecle Enter" />
         ${staged ? `<select id="sub-new-stage" class="sub-stage" title="Etapa">${names.map((o) => `<option value="${esc(o)}" ${o === defStage ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>` : ''}</div>`
@@ -2429,7 +2431,7 @@ async function openTask(id, defaults = {}) {
   const firstType = activeTypes()[0];
   const t = isNew
     ? { title: '', description: '', assignee_id: null, due_date: null, status: 'nao_iniciado', progress: 0, priority: 'media', size: 'M',
-        approval: isAdmin() ? 'aprovada' : 'pendente', type_id: firstType?.id || null, stages: firstType ? copyStages(firstType) : null,
+        approval: isAdmin() ? 'aprovada' : 'pendente', type_id: null, stages: null,
         suggested_due_date: null, origin: '', started_early: false, hold: '', hold_note: '', ...defaults }
     : task(id);
   if (!t) { toast('Atividade não encontrada'); return; }
@@ -2477,7 +2479,7 @@ async function openTask(id, defaults = {}) {
   } else if (!isNew && approval === 'recusada') {
     note = `<div class="alert danger" style="margin-bottom:14px">${ic('alert')}<div><b>Solicitação recusada</b>${t.review_note ? esc(t.review_note) : 'Sem motivo informado.'}</div></div>`;
   } else if (!isNew && !mgr && canEd) {
-    note = `<div class="readonly-note"><b>${esc(firstName(creatorName))}</b> passou este serviço para você. Você conclui as etapas e escreve as atualizações. O prazo é definido pelo gestor; se precisar de mais tempo, toque em <b>Pedir novo prazo</b>.</div>`;
+    note = `<div class="readonly-note"><b>${esc(firstName(creatorName))}</b> passou este serviço para você. Você atualiza o status, marca as subatividades e escreve as atualizações. O prazo é definido pelo gestor; se precisar de mais tempo, toque em <b>Pedir novo prazo</b>.</div>`;
   } else if (!isNew && !canEd) {
     note = `<div class="readonly-note">${lockIc} Atividade passada por <b>${esc(creatorName)}</b>${assignee ? ` para <b>${esc(assignee.name)}</b>` : ''}. Somente ${assignee ? 'o responsável e os administradores podem' : 'os administradores podem'} alterar ou comentar.</div>`;
   }
@@ -2491,7 +2493,7 @@ async function openTask(id, defaults = {}) {
     <div class="drawer-body">
       <input class="title-input" id="t-title" placeholder="${isRequest ? 'O que precisa ser feito?' : 'Nome da atividade'}" value="${esc(t.title)}" ${D(canText)} />
       ${note}
-      <div ${isRequest ? 'hidden' : ''}>
+      <div hidden>
       <div class="section-t" style="margin-top:4px">${ic('checksq').replace('<svg', '<svg width="16" height="16"')} Tipo e etapas</div>
       <div class="hint">O serviço é dividido em etapas. Cada etapa concluída aumenta a porcentagem de pronto.</div>
       <div class="kv" style="margin-bottom:10px"><label>Tipo de atividade</label>
@@ -2582,21 +2584,18 @@ async function openTask(id, defaults = {}) {
           pc.innerHTML = `<div class="range-row"><div class="prog" style="flex:1"><div class="bar"><i class="${cur.progress >= 100 ? 'full' : ''}" style="width:${cur.progress}%"></i></div></div><b>${cur.progress}%</b></div>
             <div class="small muted">Calculado pela última etapa concluída</div>`;
         } else if (autoProg(cur)) {
-          sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>`;
+          sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label} (${statusRange(k)})</option>`).join('')}</select>`;
           pc.innerHTML = `<div class="range-row"><div class="prog" style="flex:1"><div class="bar"><i class="${cur.progress >= 100 ? 'full' : ''}" style="width:${cur.progress}%"></i></div></div><b>${cur.progress}%</b></div>
             <div class="small muted">Calculado pelas subatividades</div>`;
         } else {
-          sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label}</option>`).join('')}</select>`;
+          sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label} (${statusRange(k)})</option>`).join('')}</select>`;
           pc.innerHTML = `<div class="range-row"><input type="range" id="t-prog" min="0" max="100" step="5" value="${cur.progress}" ${D(canEd)} /><b id="t-progv">${cur.progress}%</b></div>`;
           const prog = $('#t-prog', el), st = $('#t-status', el);
           prog.oninput = () => {
             $('#t-progv', el).textContent = prog.value + '%';
-            const v = Number(prog.value);
-            if (v === 100) st.value = 'concluido';
-            else if (v > 0 && st.value === 'nao_iniciado') st.value = 'em_andamento';
-            else if (v < 100 && st.value === 'concluido') st.value = 'em_andamento';
+            st.value = statusForProgress(Number(prog.value));
           };
-          st.onchange = () => { if (st.value === 'concluido') { prog.value = 100; $('#t-progv', el).textContent = '100%'; } };
+          st.onchange = () => { prog.value = progressForStatus(st.value, Number(prog.value)); $('#t-progv', el).textContent = prog.value + '%'; };
         }
       };
       const renderStages = () => {
@@ -2751,12 +2750,7 @@ async function openTask(id, defaults = {}) {
         if (holdSel) { v.hold = holdSel.value; v.hold_note = holdSel.value ? $('#t-holdn', el).value.trim() : ''; }
         if ($('#t-early', el)) v.started_early = $('#t-early', el).checked;
         v.origin = $('#t-origin', el).value.trim();
-        if (editing) {
-          const list = editor ? editor.get() : (draftStages || []);
-          v.stages = list.length ? list : null;
-          v.type_id = typeSel.value || null;
-        }
-        return v;
+        return v;   // etapas desativadas
       };
       const buildPatch = (vals) => {
         const keys = [];
@@ -2764,7 +2758,6 @@ async function openTask(id, defaults = {}) {
         if (canEd) keys.push('status', 'progress', 'hold', 'hold_note');
         if (canPlan) keys.push('assignee_id', 'due_date', 'priority', 'project_id', 'size');
         if (adm) keys.push('origin');
-        if (canStructure && editing && pending) keys.push('stages', 'type_id');
         if (pending && t.requested_by_email === S.me.email) keys.push('started_early');
         const patch = {};
         for (const k of keys) {
@@ -2798,7 +2791,7 @@ async function openTask(id, defaults = {}) {
         try {
           if (isNew) {
             const base = { project_id: vals.project_id || t.project_id, title: vals.title, description: vals.description, origin: vals.origin,
-              type_id: isRequest ? null : vals.type_id ?? null, stages: isRequest ? null : vals.stages ?? null };
+              type_id: null, stages: null };
             if (isRequest) {
               if (!$('#t-sdue', el)?.value) { toast('Informe a data acordada na reunião', 'error'); btn.disabled = false; $('#t-sdue', el)?.focus(); return; }
               await createTask({ ...base, suggested_due_date: $('#t-sdue', el).value });
@@ -3006,7 +2999,7 @@ function viewTeam() {
     return `${open} em aberto${late ? ` · <span style="color:var(--danger);font-weight:600">${late} atrasada${late > 1 ? 's' : ''}</span>` : ''}`;
   };
   $('#view').innerHTML = `
-    ${adm ? `<a class="btn btn-block" href="#/modelos" style="margin-bottom:14px;justify-content:flex-start">${ic('checksq')} Modelos de etapas (tipos de atividade) <span class="muted small" style="margin-left:auto">configurar →</span></a>` : ''}
+
     <div class="page-head"><div class="t"><h1>Equipe</h1><p>${adm ? 'Cadastre aqui o e-mail de cada colaborador. Só quem estiver nesta lista consegue entrar no app.' : 'Pessoas da equipe com acesso ao app.'}</p></div></div>
     ${adm ? `<div class="card">
       <h3>Adicionar colaborador</h3>

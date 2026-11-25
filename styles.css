@@ -1026,3 +1026,5 @@ html[data-theme="dark"] .toast.ok { background: #0f6b45; }
 .dgrid3 { align-items: stretch; }
 .dhead { flex-wrap: wrap; }
 .dhead .seg { flex: none; }
+.pill.pill-range { display: flex; justify-content: space-between; align-items: center; padding: 0 12px; }
+.pill.pill-range small { font-size: 11px; font-weight: 600; opacity: .85; }
