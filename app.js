@@ -30,7 +30,7 @@ const STATUS = {
 };
 const STATUS_ORDER = ['nao_iniciado', 'iniciando', 'em_andamento', 'finalizando', 'concluido'];
 const statusForProgress = (p) => (p >= 100 ? 'concluido' : p >= 75 ? 'finalizando' : p >= 20 ? 'em_andamento' : p >= 1 ? 'iniciando' : 'nao_iniciado');
-const progressForStatus = (st, cur = 0) => { const s = STATUS[st]; return !s ? cur : cur >= s.min && cur <= s.max ? cur : s.def; };
+const progressForStatus = (st) => STATUS[st]?.def ?? 0;   // a barra segue o status (não é arrastável)
 const statusRange = (k) => (STATUS[k].min === STATUS[k].max ? `${STATUS[k].min}%` : `${STATUS[k].min}–${STATUS[k].max}%`);
 const PRIORITY = {
   urgente: { label: 'Urgente', color: '#e2445c' },
@@ -211,6 +211,7 @@ function canPlanTask(t) {
 }
 // Status, progresso e atualizações: administradores e o responsável
 function canEditTask(t) {
+  if (t?.status === 'concluido' && !isAdmin()) return false;   // concluída: travada (só admin reabre)
   return isTaskManager(t) || (!!S.me && t.assignee_id === S.me.id);
 }
 function activeProject(t) {
@@ -566,7 +567,7 @@ async function updateTask(id, patch) {
   // automações de status/progresso
   // status e % andam juntos: mudou a %, o status acompanha; escolheu o status, a % vai para a faixa dele
   if ('progress' in patch && !('status' in patch)) patch.status = statusForProgress(patch.progress);
-  else if ('status' in patch && !('progress' in patch) && !subsOf(id).length) patch.progress = progressForStatus(patch.status, t.progress);
+  else if ('status' in patch && !('progress' in patch) && !subsOf(id).length) patch.progress = progressForStatus(patch.status);
   else if ('status' in patch && subsOf(id).length) patch.progress = patch.status === 'concluido' ? 100 : t.progress;
   const prev = { ...t };
   Object.assign(t, patch);
@@ -1427,7 +1428,7 @@ function taskRow(t, { color, showProject }) {
     <div class="td col-who">${whoCell(t)}</div>
     <div class="td col-status">${hasStages(t) ? stagePill(t) : statusPill(t, ed)}</div>
     <div class="td c col-due">${dueChip(t, adm)}</div>
-    <div class="td col-prog">${progBar(t, ed && !autoProg(t))}</div>
+    <div class="td col-prog">${progBar(t, false)}</div>
     <div class="td c col-prio">${prioPill(t, adm)}</div>
   </div>`;
 }
@@ -1507,10 +1508,23 @@ function bindViewEvents() {
 function popStatus(anchor, t) {
   const el = openPopover(anchor, `<div class="opt-list">${STATUS_ORDER.map((k) =>
     `<button class="pill editable pill-range" data-v="${k}" style="background:${STATUS[k].color}">${STATUS[k].label}<small>${statusRange(k)}</small></button>`).join('')}</div>`,
-  (el) => $$('[data-v]', el).forEach((b) => (b.onclick = () => { closePopover(); updateTask(t.id, { status: b.dataset.v }); })),
+  (el) => $$('[data-v]', el).forEach((b) => (b.onclick = async () => {
+    closePopover();
+    if (b.dataset.v === 'concluido' && !(await confirmConclusion(t))) return;
+    updateTask(t.id, { status: b.dataset.v });
+  })),
   { width: 230 });
   el.anchor = anchor;
 }
+// Confirmação antes de concluir (depois de concluída, só o gestor reabre)
+function confirmConclusion(t) {
+  const falta = subsOf(t.id).filter((x) => !x.done).length;
+  return confirmDialog(`Confirmar a conclusão de <b>${esc(t.title)}</b>?<br/><br/>
+    ${falta ? `<span style="color:var(--warn)">Ainda há ${falta} subatividade${falta > 1 ? 's' : ''} não marcada${falta > 1 ? 's' : ''}.</span><br/><br/>` : ''}
+    <span class="muted small">Depois de concluída, a atividade fica travada: não dá para mudar o status, nem adicionar subatividades ou atualizações. Só um administrador pode reabrir.</span>`,
+    { okText: 'Confirmar conclusão', title: 'Concluir atividade' });
+}
+const isLocked = (t) => t?.status === 'concluido' && !isAdmin();
 function popPriority(anchor, t) {
   const el = openPopover(anchor, `<div class="opt-list">${Object.entries(PRIORITY).map(([k, v]) =>
     `<button class="pill editable" data-v="${k}" style="background:${v.color}">${v.label}</button>`).join('')}</div>`,
@@ -2318,6 +2332,11 @@ function mountSubtasks(el, t, canEd) {
           const r = await q(sb.from('subtasks').update(patch).eq('id', x.id).select().single());
           upsertLocal(S.subtasks, r);
           if ('done' in patch || 'stage_name' in patch) await reloadTask(t.id);
+          // marcou a última: pergunta se conclui a atividade
+          const cur = task(t.id);
+          if (patch.done && cur && cur.status !== 'concluido' && subsOf(t.id).every((y) => y.done)) {
+            if (await confirmConclusion(cur)) await updateTask(t.id, { status: 'concluido' });
+          }
         } catch (e) { toastErr(e); }
       };
       $('.sub-ck', row)?.addEventListener('change', async (e) => {
@@ -2379,17 +2398,18 @@ function dailyUpdate(t) {
       <div class="field"><label>✅ O que foi feito</label><textarea class="textarea" id="du-done" rows="3" placeholder="Ex.: terminei o cálculo das sapatas S1 a S6"></textarea></div>
       <div class="field"><label>⏳ O que falta fazer</label><textarea class="textarea" id="du-todo" rows="3" placeholder="Ex.: falta a revisão e as pranchas de detalhamento"></textarea></div>
       ${staged ? (nx ? `<label class="du-stage" ${falta ? 'style="opacity:.6"' : ''}><input type="checkbox" id="du-stage" ${falta ? 'disabled' : ''} /> ${stageLabel}</label>` : '')
-        : subAuto ? `<div class="small muted">Progresso calculado pelas subatividades (${t.progress}%).</div>` : `<div class="field"><label>Progresso</label>
-        <div class="range-row"><input type="range" id="du-prog" min="0" max="100" step="5" value="${t.progress}" /><b id="du-progv">${t.progress}%</b></div></div>`}`,
+        : subAuto ? `<div class="small muted">Progresso calculado pelas subatividades (${t.progress}%).</div>` : `<div class="field"><label>Status</label>
+        <select class="select" id="du-st">${STATUS_ORDER.filter((k) => k !== 'concluido').map((k) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${STATUS[k].label} (${statusRange(k)})</option>`).join('')}</select>
+        <div class="small muted" style="margin-top:4px">Para concluir, use o status <b>Concluída</b> na atividade (pede confirmação).</div></div>`}`,
     foot: `<button class="btn" data-close>Cancelar</button><button class="btn btn-primary" id="du-save">Salvar atualização</button>`,
     onMount: ({ el, close }) => {
-      const r = $('#du-prog', el);
-      if (r) r.oninput = () => ($('#du-progv', el).textContent = r.value + '%');
+      const r = $('#du-st', el);
       setTimeout(() => $('#du-done', el).focus(), 50);
       $('#du-save', el).onclick = async () => {
         const done = $('#du-done', el).value.trim();
         const todo = $('#du-todo', el).value.trim();
-        const prog = r ? Number(r.value) : t.progress;
+        const newSt = r ? r.value : t.status;
+        const prog = r && newSt !== t.status ? progressForStatus(newSt) : t.progress;
         const stageDone = $('#du-stage', el)?.checked;
         if (!done && !todo && prog === t.progress && !stageDone) { toast('Escreva o que foi feito ou o que falta', 'error'); return; }
         $('#du-save', el).disabled = true;
@@ -2397,12 +2417,12 @@ function dailyUpdate(t) {
           const parts = [];
           if (done) parts.push(`✅ Feito: ${done}`);
           if (todo) parts.push(`⏳ Falta: ${todo}`);
-          if (!staged && prog !== t.progress) parts.push(`📊 Progresso: ${t.progress}% → ${prog}%`);
+          if (!staged && prog !== t.progress) parts.push(`📊 Status: ${STATUS[t.status]?.label || t.status} → ${STATUS[newSt].label} (${prog}%)`);
           if (stageDone && nx) parts.push(`🏁 Etapa "${nx.name}" concluída (${nx.pct}%)`);
           if (parts.length) await q(sb.from('task_comments').insert({ task_id: t.id, body: parts.join('\n'), author_email: S.me.email }));
           close();
           if (stageDone && nx) await stageAction(t, next, 'done');
-          else if (!staged && prog !== t.progress) await updateTask(t.id, { progress: prog });
+          else if (!staged && prog !== t.progress) await updateTask(t.id, { status: newSt });
           await reloadLastUpdates();
           refresh();
           toast('Atualização registrada', 'ok');
@@ -2471,15 +2491,17 @@ async function openTask(id, defaults = {}) {
 
   let note = '';
   if (isRequest) {
-    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Escreva o que precisa ser feito, o que foi conversado na reunião e a data acordada. O gestor aprova e organiza as etapas.</div></div>`;
+    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Escreva o que precisa ser feito, o que foi conversado na reunião e a data acordada. O gestor aprova e define o prazo e a prioridade.</div></div>`;
   } else if (!isNew && approval === 'pendente') {
     note = adm
-      ? `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Solicitação de ${esc(requester?.name || t.requested_by_email || '')}</b>Enviada ${relTime(t.created_at)}${t.suggested_due_date ? ` · prazo combinado: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}${t.started_early ? ' · <b>já iniciada</b>' : ''}. Confira as etapas, defina a <b>data de entrega</b> e a <b>prioridade</b> e clique em Aprovar.</div></div>`
+      ? `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Solicitação de ${esc(requester?.name || t.requested_by_email || '')}</b>Enviada ${relTime(t.created_at)}${t.suggested_due_date ? ` · prazo combinado: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}${t.started_early ? ' · <b>já iniciada</b>' : ''}. Defina a <b>data de entrega</b> e a <b>prioridade</b> e clique em Aprovar.</div></div>`
       : `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Aguardando aprovação</b>Um administrador vai confirmar o prazo e a prioridade. Enquanto isso você ainda pode ajustar o nome.</div></div>`;
   } else if (!isNew && approval === 'recusada') {
     note = `<div class="alert danger" style="margin-bottom:14px">${ic('alert')}<div><b>Solicitação recusada</b>${t.review_note ? esc(t.review_note) : 'Sem motivo informado.'}</div></div>`;
   } else if (!isNew && !mgr && canEd) {
     note = `<div class="readonly-note"><b>${esc(firstName(creatorName))}</b> passou este serviço para você. Você atualiza o status, marca as subatividades e escreve as atualizações. O prazo é definido pelo gestor; se precisar de mais tempo, toque em <b>Pedir novo prazo</b>.</div>`;
+  } else if (!isNew && isLocked(t)) {
+    note = `<div class="alert ok" style="margin-bottom:14px">${ic('check')}<div><b>Atividade concluída</b>Ela está travada: não dá para mudar o status nem adicionar subatividades ou atualizações. Se precisar mexer, fale com um administrador para reabrir.</div></div>`;
   } else if (!isNew && !canEd) {
     note = `<div class="readonly-note">${lockIc} Atividade passada por <b>${esc(creatorName)}</b>${assignee ? ` para <b>${esc(assignee.name)}</b>` : ''}. Somente ${assignee ? 'o responsável e os administradores podem' : 'os administradores podem'} alterar ou comentar.</div>`;
   }
@@ -2589,13 +2611,15 @@ async function openTask(id, defaults = {}) {
             <div class="small muted">Calculado pelas subatividades</div>`;
         } else {
           sc.innerHTML = `<select class="select" id="t-status" ${D(canEd)}>${STATUS_ORDER.map((k) => `<option value="${k}" ${cur.status === k ? 'selected' : ''}>${STATUS[k].label} (${statusRange(k)})</option>`).join('')}</select>`;
-          pc.innerHTML = `<div class="range-row"><input type="range" id="t-prog" min="0" max="100" step="5" value="${cur.progress}" ${D(canEd)} /><b id="t-progv">${cur.progress}%</b></div>`;
+          pc.innerHTML = `<div class="range-row"><div class="prog" style="flex:1"><div class="bar"><i id="t-progbar" class="${cur.progress >= 100 ? 'full' : ''}" style="width:${cur.progress}%"></i></div></div><b id="t-progv">${cur.progress}%</b></div>
+            <input type="hidden" id="t-prog" value="${cur.progress}" />
+            <div class="small muted">A barra acompanha o status escolhido</div>`;
           const prog = $('#t-prog', el), st = $('#t-status', el);
-          prog.oninput = () => {
+          st.onchange = () => {
+            prog.value = progressForStatus(st.value);
             $('#t-progv', el).textContent = prog.value + '%';
-            st.value = statusForProgress(Number(prog.value));
+            const b = $('#t-progbar', el); b.style.width = prog.value + '%'; b.classList.toggle('full', Number(prog.value) >= 100);
           };
-          st.onchange = () => { prog.value = progressForStatus(st.value, Number(prog.value)); $('#t-progv', el).textContent = prog.value + '%'; };
         }
       };
       const renderStages = () => {
@@ -2803,7 +2827,9 @@ async function openTask(id, defaults = {}) {
               toast('Atividade criada', 'ok');
             }
           } else {
-            await saveRow(buildPatch(vals));
+            const patch = buildPatch(vals);
+            if (patch.status === 'concluido' && t.status !== 'concluido' && !(await confirmConclusion(t))) { btn.disabled = false; return; }
+            await saveRow(patch);
             toast('Atividade salva', 'ok');
           }
           close();
@@ -3243,7 +3269,7 @@ async function viewNotes(noteId) {
           <div class="lock">${ic('lock')} Somente você vê suas anotações</div>
           <div class="search" style="position:relative">${ic('search').replace('<svg', '<svg style="position:absolute;left:10px;top:10px;width:16px;height:16px;color:var(--text-3)"')}<input class="input" id="n-q" placeholder="Buscar nas anotações..." style="padding-left:32px" /></div>
           <button class="btn btn-primary btn-block" id="n-new">${ic('plus')} Nova página</button>
-          <div style="display:flex;gap:6px">
+          <div style="display:${isAdmin() ? 'flex' : 'none'};gap:6px">
             <button class="btn btn-sm" id="n-exp" style="flex:1" title="Baixar todas as suas anotações">⬇ Backup</button>
             <button class="btn btn-sm" id="n-imp" style="flex:1" title="Restaurar anotações de um arquivo">⬆ Restaurar</button>
             <input type="file" id="n-file" accept=".json,application/json" hidden />
@@ -3273,7 +3299,7 @@ async function viewNotes(noteId) {
   };
   renderList();
   $('#n-q').oninput = renderList;
-  $('#n-exp').onclick = exportNotes;
+  $('#n-exp').onclick = () => isAdmin() && exportNotes();
   $('#n-imp').onclick = () => $('#n-file').click();
   $('#n-file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importNotes(f); };
   $('#n-new').onclick = chooseNoteTemplate;

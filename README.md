@@ -184,3 +184,6 @@ Menu **Painel** (no celular: toque na sua foto → Painel do gestor). Números g
 As etapas foram desativadas. Cada atividade tem um status com a sua faixa de %:
 **Não iniciado** 0% · **Iniciando** 1–19% · **Em andamento** 20–74% · **Finalizando** 75–99% · **Concluída** 100%.
 Mudou a %, o status acompanha; escolheu um status, a % vai para a faixa dele. Com subatividades, a % vem delas (feitas ÷ total, até 99%) e a pessoa marca **Concluída** no final. Item novo ou desmarcado numa atividade concluída reabre a atividade.
+- A barra de progresso não é arrastável: ela acompanha o status (Não iniciado 0%, Iniciando 10%, Em andamento 50%, Finalizando 85%, Concluída 100%) ou as subatividades.
+- **Concluir pede confirmação.** Depois de concluída, a atividade fica **travada** para o colaborador (status, subatividades, atualizações, pedido de prazo); só um administrador pode reabrir — o banco também bloqueia (atualização 14).
+- **Backup** (da equipe e das anotações) só aparece para administradores.
