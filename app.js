@@ -711,6 +711,24 @@ function renderShell() {
 // ---------------------------------------------------------------------
 // PAINEL DO GESTOR (gráficos gerais)
 // ---------------------------------------------------------------------
+// Gráfico de rosca: segs = [{label, value, color}]
+function donut(segs, { center = '', centerSub = '', size = 150, tipPrefix = '' } = {}) {
+  const total = segs.reduce((a, x) => a + x.value, 0);
+  const r = 52, C = 2 * Math.PI * r, gap = segs.filter((x) => x.value).length > 1 ? 2 : 0;
+  let off = 0;
+  const arcs = total ? segs.filter((x) => x.value).map((x) => {
+    const len = (x.value / total) * C;
+    const pctTxt = Math.round((x.value / total) * 100);
+    const a = `<circle cx="70" cy="70" r="${r}" fill="none" stroke="${x.color}" stroke-width="20" stroke-dasharray="${Math.max(0.5, len - gap)} ${C}" stroke-dashoffset="${-off}" data-tip="${esc(`${tipPrefix}${x.label}: ${x.value} (${pctTxt}%)`)}"></circle>`;
+    off += len;
+    return a;
+  }).join('') : `<circle cx="70" cy="70" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="20"></circle>`;
+  const legend = segs.map((x) => `<div class="dn-li ${x.value ? '' : 'zero'}"><i style="background:${x.color}"></i><span>${esc(x.label)}</span><b>${total ? Math.round((x.value / total) * 100) : 0}%</b><small>${x.value}</small></div>`).join('');
+  return `<div class="dn">
+    <div class="dn-svg" style="width:${size}px;height:${size}px"><svg viewBox="0 0 140 140" width="${size}" height="${size}"><g transform="rotate(-90 70 70)">${arcs}</g></svg>
+      <div class="dn-c"><b>${center}</b><span>${centerSub}</span></div></div>
+    <div class="dn-legend">${legend}</div></div>`;
+}
 function viewDashboard() {
   setTitle('Painel');
   document.title = `Painel · ${APP_NAME}`;
@@ -792,6 +810,26 @@ function viewDashboard() {
       ${weeks.map((w, i) => col(w.n, `${String(w.a.getDate()).padStart(2, '0')}/${String(w.a.getMonth() + 1).padStart(2, '0')}`, i === 0 ? 'esta' : i === 1 ? 'próxima' : '', `Semana de ${fmtDate(ymd(w.a))}: ${w.n} entrega(s)${w.list.length ? ' — ' + w.list.slice(0, 4).map((t) => t.title).join(', ') + (w.list.length > 4 ? '…' : '') : ''}`)).join('')}
     </div>`;
 
+  // 6) roscas com porcentagens
+  const DUE_SEGS = [
+    { k: 'late', label: 'Atrasadas', color: '#e2445c' },
+    { k: 'soon', label: `Vencem em até ${DUE_SOON_DAYS} dias`, color: '#fdab3d' },
+    { k: 'ok', label: 'No prazo', color: '#579bfc' },
+    { k: 'none', label: 'Sem prazo', color: '#a8adba' },
+  ];
+  const donutStatus = donut(STATUS_ORDER.map((k) => ({ label: STATUS[k].label, value: appr.filter((t) => t.status === k).length, color: STATUS[k].color })),
+    { center: appr.length ? `${pct(appr.filter((t) => t.status === 'concluido').length, appr.length)}%` : '—', centerSub: 'concluído' });
+  const donutDue = donut(DUE_SEGS.map((d) => ({ label: d.label, value: open.filter((t) => dueState(t) === d.k).length, color: d.color })),
+    { center: open.length ? `${pct(open.filter((t) => ['ok', 'soon'].includes(dueState(t))).length, open.length)}%` : '—', centerSub: 'dentro do prazo' });
+  const donutPrio = donut(Object.entries(PRIORITY).map(([k, v]) => ({ label: v.label, value: open.filter((t) => (t.priority || 'media') === k).length, color: v.color })),
+    { center: String(open.length), centerSub: 'abertas' });
+  const donutProj = donut(projRows.map((x) => ({ label: x.p.name, value: x.list.filter((t) => t.status !== 'concluido').length, color: x.p.color })),
+    { center: String(open.length), centerSub: 'abertas' });
+  const stDonuts = projRows.map((x) => `<div class="dn-mini" data-proj="${x.p.id}"><div class="dn-mini-t"><span class="cal-dot" style="background:${x.p.color}"></span>${esc(x.p.name)}</div>
+      ${donut(STATUS_ORDER.map((k) => ({ label: STATUS[k].label, value: x.list.filter((t) => t.status === k).length, color: STATUS[k].color })),
+        { center: `${pct(x.list.filter((t) => t.status === 'concluido').length, x.list.length)}%`, centerSub: 'concluído', size: 120, tipPrefix: `${x.p.name} · ` })}</div>`).join('');
+  const stMode = S.prefs.dashSt || 'barras';
+
   // 5) lista de atrasadas
   const lateList = late.slice().sort((a, b) => a.due_date.localeCompare(b.due_date)).slice(0, 12).map((t) => `
     <div class="cal-row" data-task="${t.id}">
@@ -813,9 +851,17 @@ function viewDashboard() {
         ${tile('Concluídas em 30 dias', done30.length, '', 'good')}
         ${tile('Aguardando aprovação', pend.length, pend.length ? 'solicitações de colaboradores' : '')}
       </div>
+      <div class="dgrid dgrid3">
+        <div class="card dcard"><div class="dtitle">Situação geral</div><div class="dsub">Todas as atividades aprovadas, por status.</div>${donutStatus}</div>
+        <div class="card dcard"><div class="dtitle">Prazos</div><div class="dsub">Atividades abertas.</div>${donutDue}</div>
+        <div class="card dcard"><div class="dtitle">Prioridade</div><div class="dsub">Atividades abertas.</div>${donutPrio}</div>
+        <div class="card dcard"><div class="dtitle">Abertas por projeto</div><div class="dsub">Quanto cada projeto representa do trabalho em aberto.</div>${donutProj}</div>
+      </div>
       <div class="dgrid">
         <div class="card dcard"><div class="dtitle">Quanto cada projeto está pronto</div><div class="dsub">Média ponderada pelo tamanho das atividades. Clique para abrir o projeto.</div>${progChart}</div>
-        <div class="card dcard"><div class="dtitle">Situação das atividades por projeto</div>${stLegend}${stChart}</div>
+        <div class="card dcard"><div class="dhead"><div class="dtitle">Situação das atividades por projeto</div>
+          <div class="seg seg-sm"><button class="${stMode === 'barras' ? 'active' : ''}" data-stm="barras">Barras</button><button class="${stMode === 'rosca' ? 'active' : ''}" data-stm="rosca">Rosca</button></div></div>
+          ${stMode === 'rosca' ? `<div class="dn-grid">${stDonuts || '<div class="muted small">Sem atividades.</div>'}</div>` : stLegend + stChart}</div>
         <div class="card dcard"><div class="dtitle">Carga de trabalho por pessoa</div><div class="dsub">Atividades abertas de cada um.${unassigned ? ` ${unassigned} aberta(s) sem responsável.` : ''}</div>
           <div class="dlegend">${LOAD.map((l) => `<span><i style="background:${l.color}"></i>${l.label}</span>`).join('')}</div>${loadChart}</div>
         <div class="card dcard"><div class="dtitle">Entregas previstas por semana</div><div class="dsub">Atividades abertas pela data de entrega (semanas começando na segunda-feira).</div>${weekChart}</div>
@@ -824,6 +870,7 @@ function viewDashboard() {
     </div>`;
   $('#d-proj').onchange = (e) => { f.proj = e.target.value; viewDashboard(); };
   $('#d-who').onchange = (e) => { f.who = e.target.value; viewDashboard(); };
+  $$('[data-stm]').forEach((b) => (b.onclick = () => { S.prefs.dashSt = b.dataset.stm; savePrefs(); viewDashboard(); }));
   $$('#view [data-proj]').forEach((x) => (x.onclick = () => (location.hash = `#/projeto/${x.dataset.proj}`)));
   $$('#view [data-task]').forEach((x) => (x.onclick = () => openTask(x.dataset.task)));
   bindTips($('#view'));

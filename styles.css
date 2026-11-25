@@ -997,3 +997,32 @@ html[data-theme="dark"] .toast.ok { background: #0f6b45; }
   .cols { height: 170px; gap: 3px; }
   .col-lbl { font-size: 10px; }
 }
+/* roscas */
+.dgrid3 { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
+.dhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.seg-sm button { padding: 4px 10px; font-size: 12.5px; height: 30px; }
+.dn { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.dn-svg { position: relative; flex: none; }
+.dn-svg svg { display: block; }
+.dn-svg circle[data-tip] { cursor: default; transition: stroke-width .15s; }
+.dn-svg circle[data-tip]:hover { stroke-width: 24; }
+.dn-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.dn-c b { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; }
+.dn-c span { font-size: 11px; color: var(--text-3); }
+.dn-legend { width: 100%; display: flex; flex-direction: column; gap: 4px; }
+.dn-li { display: grid; grid-template-columns: 10px 1fr auto 26px; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2); }
+.dn-li i { width: 10px; height: 10px; border-radius: 3px; }
+.dn-li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dn-li b { color: var(--text); font-weight: 700; }
+.dn-li small { color: var(--text-3); text-align: right; }
+.dn-li.zero { opacity: .5; }
+.dn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+.dn-mini { border: 1px solid var(--border); border-radius: 10px; padding: 10px; cursor: pointer; }
+.dn-mini:hover { border-color: var(--primary); }
+.dn-mini-t { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1200px) { .dgrid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .dgrid3 { grid-template-columns: 1fr; } .dn { flex-direction: row; align-items: center; } }
+.dgrid { align-items: start; }
+.dgrid3 { align-items: stretch; }
+.dhead { flex-wrap: wrap; }
+.dhead .seg { flex: none; }
