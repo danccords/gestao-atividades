@@ -705,11 +705,11 @@ a { color: var(--primary); text-decoration: none; }
 .stg-done { color: var(--ok); display: inline-flex; }
 .stg-done svg { width: 16px; height: 16px; }
 .stg-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
-.stepper { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 6px; margin-bottom: 10px; }
-.stp { border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 7px; background: var(--surface); text-align: center; position: relative; }
+.stepper { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 6px; margin-bottom: 10px; }
+.stp { border: 1px solid var(--border); border-radius: 10px; padding: 8px 6px 7px; background: var(--surface); text-align: center; position: relative; min-width: 0; overflow: hidden; }
 .stp-dot { width: 24px; height: 24px; border-radius: 50%; margin: 0 auto 4px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: #eceef3; color: var(--text-2); }
 .stp-dot svg { width: 14px; height: 14px; }
-.stp-name { font-size: 12.5px; font-weight: 600; line-height: 1.25; }
+.stp-name { font-size: 12px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; hyphens: auto; -webkit-hyphens: auto; }
 .stp-pct { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .stp.done { background: var(--ok-soft); border-color: #bfe9d4; }
 .stp.done .stp-dot { background: var(--ok); color: #fff; }
@@ -945,3 +945,4 @@ html[data-theme="dark"] .toast.ok { background: #0f6b45; }
 .pref-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
 .pref-row b { display: block; }
 .profile .card { margin-bottom: 0; }
+.stage-btns .btn { white-space: normal; height: auto; min-height: 38px; padding-top: 7px; padding-bottom: 7px; text-align: left; line-height: 1.3; max-width: 100%; }
