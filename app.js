@@ -77,6 +77,7 @@ const P = {
   back: '<path d="m15 18-6-6 6-6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   trash: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
@@ -495,7 +496,8 @@ async function afterLogin() {
 // Dados
 // ---------------------------------------------------------------------
 async function loadAll() {
-  const [members, projects, tasks, comments, subtasks, types, dueRequests] = await Promise.all([
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const [members, projects, tasks, comments, subtasks, types, dueRequests, recentComments] = await Promise.all([
     q(sb.from('team_members').select('*').order('name')),
     q(sb.from('projects').select('*').order('created_at')),
     q(sb.from('tasks').select('*').order('created_at')),
@@ -503,7 +505,9 @@ async function loadAll() {
     sb.from('subtasks').select('*').order('position').order('created_at').then(({ data }) => data || []),
     sb.from('activity_types').select('*').order('position').then(({ data }) => data || []),
     sb.from('due_requests').select('*').order('created_at', { ascending: false }).then(({ data }) => data || []),
+    sb.from('task_comments').select('id, task_id, author_email, body, created_at').gt('created_at', since).then(({ data }) => data || []),
   ]);
+  S.recentComments = recentComments || [];
   S.members = members || [];
   S.projects = projects || [];
   S.tasks = tasks || [];
@@ -588,7 +592,7 @@ function setupRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (p) => applyChange(S.projects, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_types' }, (p) => applyChange(S.types, p))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'due_requests' }, (p) => { applyChange(S.dueRequests, p); S.onDueChanged?.(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, (p) => { applyChange(S.subtasks, p); S.onSubsChanged?.(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, (p) => { checkFeedSub(p); applyChange(S.subtasks, p); S.onSubsChanged?.(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'task_comments' }, onCommentChange)
     .subscribe();
 }
@@ -606,6 +610,7 @@ function applyChange(arr, p) {
 }
 let commentReload = null;
 function onCommentChange(p) {
+  if (p.eventType === 'INSERT' && p.new) { (S.recentComments ||= []).push(p.new); checkFeedComment(p.new); }
   clearTimeout(commentReload);
   commentReload = setTimeout(async () => {
     await reloadLastUpdates();
@@ -719,7 +724,7 @@ async function logout() {
 
 function updateChrome() {
   const { late, soon } = alertsFor(myTasks());
-  const n = late.length + soon.length + myDecisions().length + finishedForMe().length + newForMe().length;
+  const n = late.length + soon.length + myDecisions().length + finishedForMe().length + newForMe().length + feedForMe().length;
   const badge = $('#bell-badge');
   if (badge) { badge.hidden = n === 0; badge.textContent = n > 99 ? '99+' : n; }
   for (const id of ['#nav-count', '#bn-count']) {
@@ -750,6 +755,7 @@ function openBell(anchor) {
   const reqs = myDecisions();
   const fin = finishedForMe();
   const nov = newForMe();
+  const feed = feedForMe();
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const html = `
     <div class="ttl">Avisos</div>
@@ -759,6 +765,12 @@ function openBell(anchor) {
         <div class="notif" data-task="${t.id}">
           <span class="dot" style="background:var(--primary)"></span>
           <div><b>${esc(t.title)}</b><span>${esc(firstName(memberByEmail(t.created_by_email)?.name || 'Gestor'))} passou · ${esc(project(t.project_id)?.name || '')}${t.due_date ? ` · entregar até ${fmtDate(t.due_date)}` : ''}</span></div>
+        </div>`).join('')}
+      ${feed.length ? '<div class="ttl" style="padding-top:2px">Novidades nos seus serviços</div>' : ''}
+      ${feed.map((x) => `
+        <div class="notif" data-task="${x.t.id}">
+          <span class="dot" style="background:var(--purple, #7c3aed)"></span>
+          <div><b>${esc(x.t.title)}</b><span>${esc(firstName(memberByEmail(x.who)?.name || x.who))} ${esc(x.text)} · ${relTime(x.at)}</span></div>
         </div>`).join('')}
       ${fin.length ? '<div class="ttl" style="padding-top:2px">Concluídas</div>' : ''}
       ${fin.map((t) => `
@@ -773,8 +785,8 @@ function openBell(anchor) {
           <div><b>${esc(d.label)}</b><span>${esc(d.t.title)} · ${esc(project(d.t.project_id)?.name || '')} · ${waitText(d.since)}</span></div>
         </div>`).join('')}
       ${reqs.length && items.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
-      ${(reqs.length || fin.length || nov.length) && items.length && !reqs.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
-      ${items.length || reqs.length || fin.length || nov.length ? items.map((t) => `
+      ${(reqs.length || fin.length || nov.length || feed.length) && items.length && !reqs.length ? '<div class="ttl" style="padding-top:6px">Prazos</div>' : ''}
+      ${items.length || reqs.length || fin.length || nov.length || feed.length ? items.map((t) => `
         <div class="notif" data-task="${t.id}">
           <span class="dot" style="background:${dueState(t) === 'late' ? 'var(--danger)' : 'var(--warn)'}"></span>
           <div><b>${esc(t.title)}</b><span>${esc(project(t.project_id)?.name || '')} · ${esc(dueText(t))}</span></div>
@@ -784,7 +796,8 @@ function openBell(anchor) {
     ${perm === 'default' ? `<button class="btn btn-sm btn-block" id="enable-notif" style="margin-top:6px">${ic('bell')} Ativar notificações neste aparelho</button>` : ''}`;
   if (fin.length) markDoneSeen(fin.map((t) => t.id));
   if (nov.length) markNewSeen(nov.map((t) => t.id));
-  if (fin.length || nov.length) setTimeout(updateChrome, 0);
+  if (feed.length) markFeedSeen(feed.map((x) => x.key));
+  if (fin.length || nov.length || feed.length) setTimeout(updateChrome, 0);
   openPopover(anchor, html, (el) => {
     $$('[data-task]', el).forEach((n) => (n.onclick = () => { closePopover(); openTask(n.dataset.task); }));
     const b = $('#enable-notif', el);
@@ -1298,6 +1311,60 @@ function checkAssigned(p) {
       ? reg.showNotification(title, { body, icon: 'icons/icon-192.png', tag: 'new-' + n.id })
       : new Notification(title, { body, icon: 'icons/icon-192.png' })).catch(() => {});
   }
+}
+// Novidades nos meus serviços: itens (subatividades) e avisos/comentários que outra pessoa colocou
+const SEEN_FEED_KEY = 'ga-seen-feed';
+function seenFeed() { try { return JSON.parse(localStorage.getItem(SEEN_FEED_KEY) || '{}'); } catch { return {}; } }
+function feedForMe() {
+  if (!S.me) return [];
+  const seen = seenFeed();
+  const limit = Date.now() - 7 * 86400000;
+  const mine = (taskId) => { const t = task(taskId); return t && t.assignee_id === S.me.id && isApproved(t) && t.status !== 'concluido' && activeProject(t) ? t : null; };
+  const out = [];
+  for (const x of S.subtasks) {
+    const t = mine(x.task_id);
+    if (!t || x.done || !x.created_by_email || x.created_by_email === S.me.email) continue;
+    if (new Date(x.created_at).getTime() < limit || new Date(x.created_at) <= new Date(t.approved_at || t.created_at)) continue;
+    out.push({ key: 's' + x.id, t, who: x.created_by_email, text: `adicionou "${x.title}"`, at: x.created_at });
+  }
+  for (const c of S.recentComments || []) {
+    const t = mine(c.task_id);
+    if (!t || c.author_email === S.me.email || new Date(c.created_at).getTime() < limit) continue;
+    out.push({ key: 'c' + c.id, t, who: c.author_email, text: `escreveu: ${c.body.replace(/\s+/g, ' ').slice(0, 80)}`, at: c.created_at });
+  }
+  return out.filter((x) => !seen[x.key]).sort((a, b) => b.at.localeCompare(a.at));
+}
+function markFeedSeen(keys) {
+  const seen = seenFeed();
+  const limit = Date.now() - 30 * 86400000;
+  for (const k of Object.keys(seen)) if (seen[k] < limit) delete seen[k];
+  keys.forEach((k) => (seen[k] = Date.now()));
+  try { localStorage.setItem(SEEN_FEED_KEY, JSON.stringify(seen)); } catch {}
+}
+function deviceNotify(title, body, tag) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  navigator.serviceWorker?.getRegistration().then((reg) => reg
+    ? reg.showNotification(title, { body, icon: 'icons/icon-192.png', tag })
+    : new Notification(title, { body, icon: 'icons/icon-192.png' })).catch(() => {});
+}
+function feedNotify(t, who, what, tag) {
+  const name = firstName(memberByEmail(who)?.name || who);
+  toast(`🔔 ${name} ${what} em "${t.title}"`, 'ok');
+  deviceNotify(`Novidade em "${t.title}"`, `${name} ${what}`, tag);
+  setTimeout(updateChrome, 0);
+}
+function checkFeedSub(p) {
+  const n = p.new;
+  if (p.eventType !== 'INSERT' || !n || !S.me || !n.created_by_email || n.created_by_email === S.me.email) return;
+  const t = task(n.task_id);
+  if (!t || t.assignee_id !== S.me.id || !isApproved(t)) return;
+  feedNotify(t, n.created_by_email, `adicionou "${n.title}"`, 'sub-' + n.id);
+}
+function checkFeedComment(c) {
+  if (!S.me || c.author_email === S.me.email) return;
+  const t = task(c.task_id);
+  if (!t || t.assignee_id !== S.me.id || !isApproved(t)) return;
+  feedNotify(t, c.author_email, `escreveu um aviso`, 'cmt-' + c.id);
 }
 function checkFinished(p) {
   const n = p.new;
@@ -1906,6 +1973,12 @@ async function openTask(id, defaults = {}) {
         suggested_due_date: null, origin: '', started_early: false, hold: '', hold_note: '', ...defaults }
     : task(id);
   if (!t) { toast('Atividade não encontrada'); return; }
+  if (!isNew && t.id) {   // abrir o serviço = já viu as novidades dele
+    const fk = feedForMe().filter((x) => x.t.id === t.id).map((x) => x.key);
+    if (fk.length) markFeedSeen(fk);
+    if (newForMe().some((x) => x.id === t.id)) markNewSeen([t.id]);
+    if (fk.length) setTimeout(updateChrome, 0);
+  }
   const adm = isAdmin();
   const approval = approvalOf(t);
   const pending = approval !== 'aprovada';
@@ -2362,12 +2435,12 @@ async function openTask(id, defaults = {}) {
 }
 
 // Caixa de texto simples (motivo de recusa/devolução)
-function promptText(title, label) {
+function promptText(title, label, initial = '') {
   return new Promise((resolve) => {
     let done = false;
     openModal({
       title: esc(title),
-      body: `<div class="field"><label>${esc(label)}</label><textarea class="textarea" id="pt-in" rows="3"></textarea></div>`,
+      body: `<div class="field"><label>${esc(label)}</label><textarea class="textarea" id="pt-in" rows="3">${esc(initial)}</textarea></div>`,
       foot: `<button class="btn" data-close>Voltar</button><button class="btn btn-primary" id="pt-ok">Confirmar</button>`,
       onMount: ({ el, close }) => {
         setTimeout(() => $('#pt-in', el).focus(), 50);
@@ -2603,7 +2676,117 @@ function sanitize(html) {
 }
 
 async function loadNotes() {
-  S.notes = await q(sb.from('notes').select('*').order('updated_at', { ascending: false }));
+  const all = await q(sb.from('notes').select('*').order('updated_at', { ascending: false }));
+  S.notes = (all || []).filter((n) => !n.is_template);
+  S.noteTemplates = (all || []).filter((n) => n.is_template);
+}
+
+// ---------- Modelos de anotação ----------
+const todayBR = () => new Date().toLocaleDateString('pt-BR');
+const CK = (items) => `<ul class="checklist">${items.map((x) => `<li data-checked="false">${x}</li>`).join('')}</ul>`;
+const NOTE_TEMPLATES = [
+  { key: 'ata', icon: '📝', name: 'Ata de reunião', desc: 'Participantes, pauta, decisões e ações com responsável e prazo',
+    title: () => `Ata de reunião — ${todayBR()}`,
+    html: () => `<p><b>Data:</b> ${todayBR()} &nbsp; <b>Horário:</b> &nbsp; <b>Local:</b> </p>
+<p><b>Projeto / Cliente:</b> </p>
+<p><b>Elaborado por:</b> ${esc(S.me?.name || '')}</p>
+<h2>Participantes</h2><ul><li>Nome — empresa / função</li></ul>
+<h2>Pauta</h2><ol><li></li></ol>
+<h2>Assuntos discutidos</h2><p></p>
+<h2>Decisões</h2><ul><li></li></ul>
+<h2>Ações combinadas</h2>${CK(['O que fazer — Responsável — Prazo'])}
+<h2>Próxima reunião</h2><p><b>Data:</b> &nbsp; <b>Local:</b> </p>` },
+  { key: 'visita', icon: '🏗️', name: 'Relatório de visita técnica', desc: 'Local, objetivo, constatações, fotos/anexos e pendências',
+    title: () => `Visita técnica — ${todayBR()}`,
+    html: () => `<p><b>Data:</b> ${todayBR()} &nbsp; <b>Local / obra:</b> </p>
+<p><b>Cliente:</b> &nbsp; <b>Acompanhado por:</b> </p>
+<p><b>Responsável pela visita:</b> ${esc(S.me?.name || '')}</p>
+<h2>Objetivo da visita</h2><p></p>
+<h2>Constatações</h2><ul><li></li></ul>
+<h2>Medições / dados coletados</h2><ul><li></li></ul>
+<h2>Fotos e anexos</h2><p>Indique onde estão salvos (pasta, link).</p>
+<h2>Pendências</h2>${CK(['Pendência — Responsável — Prazo'])}` },
+  { key: 'inspecao', icon: '✅', name: 'Checklist de inspeção', desc: 'Lista de verificação com observações',
+    title: () => `Inspeção — ${todayBR()}`,
+    html: () => `<p><b>Data:</b> ${todayBR()} &nbsp; <b>Equipamento / item:</b> </p>
+<p><b>Inspetor:</b> ${esc(S.me?.name || '')}</p>
+<h2>Verificações</h2>${CK(['Dimensional conforme desenho', 'Soldas sem defeitos aparentes', 'Pintura / acabamento', 'Identificação / plaqueta', 'Documentação (certificados, relatórios)'])}
+<h2>Não conformidades</h2><ul><li></li></ul>
+<h2>Resultado</h2><p>Aprovado / Aprovado com ressalvas / Reprovado</p>` },
+];
+async function newNoteFrom(tpl) {
+  const row = await q(sb.from('notes').insert(tpl ? { title: tpl.title, content: tpl.html, icon: tpl.icon || '📄' } : { title: '', content: '', icon: '📄' }).select().single());
+  S.notes.unshift(row);
+  location.hash = `#/notas/${row.id}`;
+  setTimeout(() => (tpl ? $('#ed') : $('#note-title'))?.focus(), 80);
+}
+function chooseNoteTemplate() {
+  const mine = S.noteTemplates || [];
+  const card = (attrs, icon, name, desc, extra = '') => `<div class="tpl-card" ${attrs}><span class="tpl-ic">${icon}</span><div class="tpl-tx"><b>${name}</b><span>${desc}</span></div>${extra}</div>`;
+  const m = openModal({
+    title: 'Nova página',
+    body: `<div class="tpl-list">
+      ${card('data-tpl="blank"', '📄', 'Página em branco', 'Comece do zero')}
+      ${NOTE_TEMPLATES.map((x) => card(`data-tpl="${x.key}"`, x.icon, esc(x.name), esc(x.desc))).join('')}
+      ${mine.length ? `<div class="note-group-t" style="padding:8px 2px 2px">Meus modelos</div>` + mine.map((x) => card(`data-mine="${x.id}"`, esc(x.icon || '📄'), esc(x.title || 'Sem título'), 'Modelo salvo por você',
+        `<button class="btn btn-ghost btn-icon btn-sm" data-delmine="${x.id}" title="Excluir modelo">${ic('trash')}</button>`)).join('') : ''}
+    </div>
+    <p class="small muted" style="margin-top:10px">Dica: abra qualquer página e use <b>Salvar como modelo</b> para criar o seu próprio modelo.</p>`,
+    foot: `<button class="btn" data-close>Cancelar</button>`,
+  });
+  const root = m.el;
+  $$('[data-tpl]', root).forEach((b) => (b.onclick = async () => {
+    const t = NOTE_TEMPLATES.find((x) => x.key === b.dataset.tpl);
+    m.close();
+    try { await newNoteFrom(t ? { title: t.title(), html: t.html(), icon: t.icon } : null); } catch (e) { toastErr(e); }
+  }));
+  $$('[data-mine]', root).forEach((b) => (b.onclick = async (e) => {
+    if (e.target.closest('[data-delmine]')) return;
+    const t = mine.find((x) => x.id === b.dataset.mine);
+    m.close();
+    try { await newNoteFrom({ title: (t.title || '').replace(/\s*\(modelo\)$/i, '') + ` — ${todayBR()}`, html: t.content, icon: t.icon }); } catch (err) { toastErr(err); }
+  }));
+  $$('[data-delmine]', root).forEach((b) => (b.onclick = async (e) => {
+    e.stopPropagation();
+    if (!(await confirmDialog('Excluir este modelo? As páginas criadas a partir dele continuam existindo.', { okText: 'Excluir', danger: true, title: 'Excluir modelo' }))) return;
+    try {
+      await q(sb.from('notes').delete().eq('id', b.dataset.delmine));
+      S.noteTemplates = S.noteTemplates.filter((x) => x.id !== b.dataset.delmine);
+      m.close(); chooseNoteTemplate();
+    } catch (err) { toastErr(err); }
+  }));
+}
+// Exporta a página como PDF (abre a janela de impressão: escolha "Salvar como PDF")
+function exportNotePdf(note, html) {
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+  document.body.appendChild(fr);
+  const d = fr.contentDocument;
+  d.open();
+  d.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(note.title || 'Anotação')}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: #1f2937; font-size: 11.5pt; line-height: 1.5; }
+  .hd { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1d4ed8; padding-bottom: 8px; margin-bottom: 16px; }
+  .hd .co { font-weight: 700; color: #1d4ed8; font-size: 12pt; } .hd .dt { font-size: 9.5pt; color: #6b7280; text-align: right; }
+  h1.t { font-size: 18pt; margin: 0 0 12px; }
+  h1 { font-size: 16pt; } h2 { font-size: 13pt; margin: 16px 0 6px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 3px; } h3 { font-size: 12pt; }
+  p { margin: 4px 0; } ul, ol { margin: 4px 0; padding-left: 22px; } li { margin: 2px 0; }
+  ul.checklist { list-style: none; padding-left: 4px; } ul.checklist li::before { content: '☐  '; } ul.checklist li[data-checked="true"]::before { content: '☑  '; }
+  blockquote { border-left: 3px solid #d1d5db; margin: 6px 0; padding-left: 10px; color: #4b5563; }
+  pre { background: #f3f4f6; padding: 8px; border-radius: 4px; white-space: pre-wrap; }
+  .ft { margin-top: 28px; font-size: 9pt; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 6px; }
+</style></head><body>
+<div class="hd"><div class="co">${esc(COMPANY_NAME)}</div><div class="dt">${esc(S.me?.name || '')}<br>${new Date().toLocaleDateString('pt-BR')}</div></div>
+<h1 class="t">${esc(note.title || 'Sem título')}</h1>
+${sanitize(html)}
+<div class="ft">Gerado pelo ${esc(APP_NAME)}</div>
+</body></html>`);
+  d.close();
+  setTimeout(() => {
+    try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { toastErr(e); }
+    setTimeout(() => fr.remove(), 60000);
+  }, 300);
 }
 
 async function viewNotes(noteId) {
@@ -2659,14 +2842,7 @@ async function viewNotes(noteId) {
   $('#n-exp').onclick = exportNotes;
   $('#n-imp').onclick = () => $('#n-file').click();
   $('#n-file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importNotes(f); };
-  $('#n-new').onclick = async () => {
-    try {
-      const row = await q(sb.from('notes').insert({ title: '', content: '', icon: '📄' }).select().single());
-      S.notes.unshift(row);
-      location.hash = `#/notas/${row.id}`;
-      setTimeout(() => $('#note-title')?.focus(), 80);
-    } catch (e) { toastErr(e); }
-  };
+  $('#n-new').onclick = chooseNoteTemplate;
 
   if (note) mountEditor(note, renderList);
 }
@@ -2678,6 +2854,8 @@ function mountEditor(note, renderList) {
       <div class="editor-top">
         <span id="n-saved">Editado ${relTime(note.updated_at)}</span>
         <span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" id="n-pdf" title="Exportar esta página em PDF">${ic('download').replace('<svg', '<svg width="15" height="15"')} PDF</button>
+        <button class="btn btn-ghost btn-sm" id="n-tpl" title="Usar esta página como modelo para as próximas">⭐ Salvar como modelo</button>
         <button class="btn btn-ghost btn-sm" id="n-pin">${note.pinned ? '📌 Desafixar' : '📌 Fixar'}</button>
         <button class="btn btn-ghost btn-sm" id="n-del" style="color:var(--danger)">${ic('trash').replace('<svg', '<svg width="15" height="15"')} Excluir</button>
       </div>
@@ -2751,6 +2929,19 @@ function mountEditor(note, renderList) {
         note.icon = b.dataset.e; $('#n-icon').textContent = note.icon; closePopover(); dirty = true; save();
       }));
     }, { width: 300 });
+  };
+
+  // --- PDF e modelo ---
+  $('#n-pdf').onclick = async () => { await save(); exportNotePdf({ ...note, title: titleEl.value.trim() }, ed.innerHTML); };
+  $('#n-tpl').onclick = async () => {
+    await save();
+    const name = await promptText('Salvar como modelo', 'Nome do modelo', (titleEl.value.trim() || 'Meu modelo').replace(/\s+—\s+\d{2}\/\d{2}\/\d{4}$/, ''));
+    if (!name) return;
+    try {
+      const row = await q(sb.from('notes').insert({ title: name, content: ed.innerHTML, icon: note.icon || '📄', is_template: true }).select().single());
+      (S.noteTemplates ||= []).unshift(row);
+      toast('Modelo salvo. Ele aparece em "Nova página".', 'ok');
+    } catch (e) { toastErr(e); }
   };
 
   // --- fixar / excluir ---

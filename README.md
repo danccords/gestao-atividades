@@ -163,3 +163,8 @@ supabase/
 - **Não chega e-mail de confirmação**: limite do e-mail padrão do Supabase. Configure o SMTP (passo 5.4). Para destravar alguém na hora: **Authentication → Users** → no usuário, **Confirm user** (ou "Send magic link").
 - **Link de confirmação abre uma página errada**: confira a **Site URL** e as **Redirect URLs** (passo 5.1).
 - **Mudei o app e o celular mostra a versão antiga**: feche e abra o app de novo (ele busca a versão nova automaticamente quando tem internet).
+
+## Avisos e modelos de anotação
+- **Novidades nos seus serviços**: quando outra pessoa (ex.: o gestor) adiciona uma subatividade ou escreve um aviso/comentário num serviço seu, você recebe aviso no sino, na tela e no aparelho (se as notificações estiverem ativadas).
+- **Modelos de anotação**: "Nova página" oferece Ata de reunião, Relatório de visita técnica e Checklist de inspeção. Qualquer página pode virar modelo pessoal com **Salvar como modelo**.
+- **PDF**: o botão **PDF** da anotação abre a impressão com cabeçalho da empresa; escolha "Salvar como PDF".
