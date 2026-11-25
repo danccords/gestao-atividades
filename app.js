@@ -876,7 +876,7 @@ function prioPill(t, editable) {
   return `<button class="pill sm ${editable ? 'editable' : ''}" ${editable ? 'data-act="prio" data-pop-anchor' : 'tabindex="-1"'} style="background:${p.color}">${p.label}</button>`;
 }
 function dueChip(t, editable) {
-  if (approvalOf(t) === 'pendente') return `<span class="due soon" title="Aguardando aprovação">${ic('clock')}Aguardando aprovação</span>`;
+  if (approvalOf(t) === 'pendente') return `<span class="due pend" title="Aguardando aprovação${t.suggested_due_date ? ' · data acordada: ' + fmtDate(t.suggested_due_date, true) : ''}">${ic('clock')}Em aprovação</span>`;
   if (approvalOf(t) === 'recusada') return `<span class="due late">${ic('x')}Recusada</span>`;
   const st = dueState(t);
   return `<span class="due ${st}" ${editable ? 'data-act="due" data-pop-anchor style="cursor:pointer"' : ''} title="${t.due_date ? fmtDate(t.due_date, true) : ''}">${ic('calendar')}${esc(dueText(t))}</span>`;
