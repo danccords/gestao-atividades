@@ -2721,17 +2721,13 @@ async function newNoteFrom(tpl) {
   setTimeout(() => (tpl ? $('#ed') : $('#note-title'))?.focus(), 80);
 }
 function chooseNoteTemplate() {
-  const mine = S.noteTemplates || [];
   const card = (attrs, icon, name, desc, extra = '') => `<div class="tpl-card" ${attrs}><span class="tpl-ic">${icon}</span><div class="tpl-tx"><b>${name}</b><span>${desc}</span></div>${extra}</div>`;
   const m = openModal({
     title: 'Nova página',
     body: `<div class="tpl-list">
       ${card('data-tpl="blank"', '📄', 'Página em branco', 'Comece do zero')}
       ${NOTE_TEMPLATES.map((x) => card(`data-tpl="${x.key}"`, x.icon, esc(x.name), esc(x.desc))).join('')}
-      ${mine.length ? `<div class="note-group-t" style="padding:8px 2px 2px">Meus modelos</div>` + mine.map((x) => card(`data-mine="${x.id}"`, esc(x.icon || '📄'), esc(x.title || 'Sem título'), 'Modelo salvo por você',
-        `<button class="btn btn-ghost btn-icon btn-sm" data-delmine="${x.id}" title="Excluir modelo">${ic('trash')}</button>`)).join('') : ''}
-    </div>
-    <p class="small muted" style="margin-top:10px">Dica: abra qualquer página e use <b>Salvar como modelo</b> para criar o seu próprio modelo.</p>`,
+    </div>`,
     foot: `<button class="btn" data-close>Cancelar</button>`,
   });
   const root = m.el;
@@ -2739,21 +2735,6 @@ function chooseNoteTemplate() {
     const t = NOTE_TEMPLATES.find((x) => x.key === b.dataset.tpl);
     m.close();
     try { await newNoteFrom(t ? { title: t.title(), html: t.html(), icon: t.icon } : null); } catch (e) { toastErr(e); }
-  }));
-  $$('[data-mine]', root).forEach((b) => (b.onclick = async (e) => {
-    if (e.target.closest('[data-delmine]')) return;
-    const t = mine.find((x) => x.id === b.dataset.mine);
-    m.close();
-    try { await newNoteFrom({ title: (t.title || '').replace(/\s*\(modelo\)$/i, '') + ` — ${todayBR()}`, html: t.content, icon: t.icon }); } catch (err) { toastErr(err); }
-  }));
-  $$('[data-delmine]', root).forEach((b) => (b.onclick = async (e) => {
-    e.stopPropagation();
-    if (!(await confirmDialog('Excluir este modelo? As páginas criadas a partir dele continuam existindo.', { okText: 'Excluir', danger: true, title: 'Excluir modelo' }))) return;
-    try {
-      await q(sb.from('notes').delete().eq('id', b.dataset.delmine));
-      S.noteTemplates = S.noteTemplates.filter((x) => x.id !== b.dataset.delmine);
-      m.close(); chooseNoteTemplate();
-    } catch (err) { toastErr(err); }
   }));
 }
 // Exporta a página como PDF (abre a janela de impressão: escolha "Salvar como PDF")
@@ -2855,7 +2836,6 @@ function mountEditor(note, renderList) {
         <span id="n-saved">Editado ${relTime(note.updated_at)}</span>
         <span class="spacer"></span>
         <button class="btn btn-ghost btn-sm" id="n-pdf" title="Exportar esta página em PDF">${ic('download').replace('<svg', '<svg width="15" height="15"')} PDF</button>
-        <button class="btn btn-ghost btn-sm" id="n-tpl" title="Usar esta página como modelo para as próximas">⭐ Salvar como modelo</button>
         <button class="btn btn-ghost btn-sm" id="n-pin">${note.pinned ? '📌 Desafixar' : '📌 Fixar'}</button>
         <button class="btn btn-ghost btn-sm" id="n-del" style="color:var(--danger)">${ic('trash').replace('<svg', '<svg width="15" height="15"')} Excluir</button>
       </div>
@@ -2933,17 +2913,6 @@ function mountEditor(note, renderList) {
 
   // --- PDF e modelo ---
   $('#n-pdf').onclick = async () => { await save(); exportNotePdf({ ...note, title: titleEl.value.trim() }, ed.innerHTML); };
-  $('#n-tpl').onclick = async () => {
-    await save();
-    const name = await promptText('Salvar como modelo', 'Nome do modelo', (titleEl.value.trim() || 'Meu modelo').replace(/\s+—\s+\d{2}\/\d{2}\/\d{4}$/, ''));
-    if (!name) return;
-    try {
-      const row = await q(sb.from('notes').insert({ title: name, content: ed.innerHTML, icon: note.icon || '📄', is_template: true }).select().single());
-      (S.noteTemplates ||= []).unshift(row);
-      toast('Modelo salvo. Ele aparece em "Nova página".', 'ok');
-    } catch (e) { toastErr(e); }
-  };
-
   // --- fixar / excluir ---
   $('#n-pin').onclick = async () => {
     try {

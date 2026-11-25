@@ -166,5 +166,5 @@ supabase/
 
 ## Avisos e modelos de anotação
 - **Novidades nos seus serviços**: quando outra pessoa (ex.: o gestor) adiciona uma subatividade ou escreve um aviso/comentário num serviço seu, você recebe aviso no sino, na tela e no aparelho (se as notificações estiverem ativadas).
-- **Modelos de anotação**: "Nova página" oferece Ata de reunião, Relatório de visita técnica e Checklist de inspeção. Qualquer página pode virar modelo pessoal com **Salvar como modelo**.
+- **Modelos de anotação**: "Nova página" oferece Ata de reunião, Relatório de visita técnica e Checklist de inspeção.
 - **PDF**: o botão **PDF** da anotação abre a impressão com cabeçalho da empresa; escolha "Salvar como PDF".
