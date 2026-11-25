@@ -101,6 +101,7 @@ const P = {
   send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
   spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  chart: '<path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
 };
@@ -659,6 +660,7 @@ function renderShell() {
         <a href="#/inicio" data-nav="inicio">${ic('home')} Projetos</a>
         <a href="#/minhas" data-nav="minhas">${ic('check')} Minhas atividades <span class="count" id="nav-count" hidden></span></a>
         <a href="#/calendario" data-nav="calendario">${ic('calendar')} Calendário</a>
+        ${me.role === 'admin' ? `<a href="#/painel" data-nav="painel">${ic('chart')} Painel</a>` : ''}
         <a href="#/notas" data-nav="notas">${ic('note')} Anotações</a>
         ${me.role === 'admin' ? `<a href="#/equipe" data-nav="equipe">${ic('users')} Equipe</a>
         <a href="#/modelos" data-nav="modelos">${ic('checksq')} Modelos de etapas</a>` : ''}
@@ -704,6 +706,144 @@ function renderShell() {
   $('#back').onclick = () => { if (S.backTo) location.hash = S.backTo; };
   bindViewEvents();
   updateChrome();
+}
+
+// ---------------------------------------------------------------------
+// PAINEL DO GESTOR (gráficos gerais)
+// ---------------------------------------------------------------------
+function viewDashboard() {
+  setTitle('Painel');
+  document.title = `Painel · ${APP_NAME}`;
+  const f = (S.dash ||= { proj: '', who: '' });
+  const projs = S.projects.filter((p) => !p.archived);
+  const inScope = (t) => activeProject(t) && (!f.proj || t.project_id === f.proj) && (!f.who || t.assignee_id === f.who);
+  const all = S.tasks.filter(inScope);
+  const appr = all.filter(isApproved);
+  const open = appr.filter((t) => t.status !== 'concluido');
+  const late = open.filter((t) => dueState(t) === 'late');
+  const soon = open.filter((t) => dueState(t) === 'soon');
+  const pend = all.filter((t) => approvalOf(t) === 'pendente');
+  const doneAt = (t) => { const d = (t.stages || []).map((x) => x.done_at).filter(Boolean).sort().pop(); return new Date(d || t.updated_at || t.created_at); };
+  const d30 = Date.now() - 30 * 86400000;
+  const done30 = appr.filter((t) => t.status === 'concluido' && doneAt(t).getTime() > d30);
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const wavg = (list) => { const w = list.reduce((s2, t) => s2 + (SIZES[t.size]?.w || 2), 0); return w ? Math.round(list.reduce((s2, t) => s2 + t.progress * (SIZES[t.size]?.w || 2), 0) / w) : 0; };
+  const tile = (label, val, sub, tone = '') => `<div class="dtile ${tone}"><span>${label}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const tip = (txt) => `data-tip="${esc(txt)}"`;
+
+  // 1) progresso por projeto (barras horizontais, cor do projeto)
+  const projRows = projs.filter((p) => !f.proj || p.id === f.proj).map((p) => {
+    const list = appr.filter((t) => t.project_id === p.id);
+    return { p, list, prog: wavg(list), late: list.filter((t) => dueState(t) === 'late').length };
+  }).filter((x) => x.list.length).sort((a, b) => b.prog - a.prog);
+  const progChart = projRows.length ? projRows.map((x) => `
+    <div class="hb-row" data-proj="${x.p.id}" ${tip(`${x.p.name}: ${x.prog}% pronto · ${x.list.length} atividade(s)${x.late ? ` · ${x.late} atrasada(s)` : ''}`)}>
+      <div class="hb-lbl"><span class="cal-dot" style="background:${x.p.color}"></span><span>${esc(x.p.name)}</span></div>
+      <div class="hb-track"><i style="width:${x.prog}%;background:${x.p.color}"></i></div>
+      <div class="hb-val">${x.prog}%${x.late ? ` <em>${x.late} atras.</em>` : ''}</div>
+    </div>`).join('') : '<div class="muted small">Sem atividades.</div>';
+
+  // 2) status por projeto (barra empilhada 100%)
+  const stOrder = STATUS_ORDER;
+  const stLegend = `<div class="dlegend">${stOrder.map((k) => `<span><i style="background:${STATUS[k].color}"></i>${STATUS[k].label}</span>`).join('')}</div>`;
+  const stChart = projRows.length ? projRows.map((x) => {
+    const n = x.list.length;
+    const segs = stOrder.map((k) => ({ k, c: x.list.filter((t) => t.status === k).length })).filter((s2) => s2.c);
+    return `<div class="hb-row" data-proj="${x.p.id}">
+      <div class="hb-lbl"><span class="cal-dot" style="background:${x.p.color}"></span><span>${esc(x.p.name)}</span></div>
+      <div class="sb-track">${segs.map((s2) => `<i style="flex:${s2.c};background:${STATUS[s2.k].color}" ${tip(`${x.p.name} · ${STATUS[s2.k].label}: ${s2.c} de ${n} (${pct(s2.c, n)}%)`)}></i>`).join('')}</div>
+      <div class="hb-val">${n}</div>
+    </div>`;
+  }).join('') : '';
+
+  // 3) carga por pessoa (empilhada: atrasadas / vencem logo / em dia / sem prazo)
+  const LOAD = [
+    { k: 'late', label: 'Atrasadas', color: 'var(--danger)' },
+    { k: 'soon', label: `Vencem em até ${DUE_SOON_DAYS} dias`, color: 'var(--warn)' },
+    { k: 'ok', label: 'No prazo', color: 'var(--primary)' },
+    { k: 'none', label: 'Sem prazo', color: 'var(--text-3)' },
+  ];
+  const people = S.members.filter((m) => m.active).map((m) => {
+    const list = open.filter((t) => t.assignee_id === m.id);
+    return { m, list, c: Object.fromEntries(LOAD.map((l) => [l.k, list.filter((t) => dueState(t) === l.k).length])) };
+  }).filter((x) => x.list.length).sort((a, b) => b.list.length - a.list.length || b.c.late - a.c.late);
+  const unassigned = open.filter((t) => !t.assignee_id).length;
+  const maxLoad = Math.max(1, ...people.map((x) => x.list.length));
+  const loadChart = people.length ? people.map((x) => `
+    <div class="hb-row">
+      <div class="hb-lbl">${avatar(x.m)}<span>${esc(x.m.name)}</span></div>
+      <div class="hb-track ld"><div class="sb-track" style="width:${(x.list.length / maxLoad) * 100}%">${LOAD.filter((l) => x.c[l.k]).map((l) => `<i style="flex:${x.c[l.k]};background:${l.color}" ${tip(`${x.m.name} · ${l.label}: ${x.c[l.k]}`)}></i>`).join('')}</div></div>
+      <div class="hb-val">${x.list.length}</div>
+    </div>`).join('') : '<div class="muted small">Ninguém com atividades abertas.</div>';
+
+  // 4) entregas previstas nas próximas 8 semanas (colunas) + atrasadas
+  const monday = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; })();
+  const weeks = Array.from({ length: 8 }, (_, i) => {
+    const a = addDays(monday, i * 7), b = addDays(a, 7);
+    const list = open.filter((t) => t.due_date && parseDate(t.due_date) >= a && parseDate(t.due_date) < b);
+    return { a, n: list.length, list };
+  });
+  const maxW = Math.max(1, late.length, ...weeks.map((w) => w.n));
+  const col = (n, label, sub, tipTxt, cls = '') => `<div class="col ${cls}" ${tip(tipTxt)}>
+      <div class="col-bar"><b>${n || ''}</b><i style="height:${(n / maxW) * 100}%"></i></div>
+      <div class="col-lbl">${label}<small>${sub}</small></div></div>`;
+  const weekChart = `<div class="cols">
+      ${col(late.length, 'Atraso', 'vencidas', `${late.length} atividade(s) atrasada(s)`, 'late')}
+      ${weeks.map((w, i) => col(w.n, `${String(w.a.getDate()).padStart(2, '0')}/${String(w.a.getMonth() + 1).padStart(2, '0')}`, i === 0 ? 'esta' : i === 1 ? 'próxima' : '', `Semana de ${fmtDate(ymd(w.a))}: ${w.n} entrega(s)${w.list.length ? ' — ' + w.list.slice(0, 4).map((t) => t.title).join(', ') + (w.list.length > 4 ? '…' : '') : ''}`)).join('')}
+    </div>`;
+
+  // 5) lista de atrasadas
+  const lateList = late.slice().sort((a, b) => a.due_date.localeCompare(b.due_date)).slice(0, 12).map((t) => `
+    <div class="cal-row" data-task="${t.id}">
+      <span class="cal-dot" style="background:${project(t.project_id)?.color || '#999'}"></span>
+      <div class="cal-row-tx"><b>${esc(t.title)}</b><span>${esc(project(t.project_id)?.name || '')} · ${member(t.assignee_id) ? esc(member(t.assignee_id).name) : 'sem responsável'}</span></div>
+      <span class="due late"><span>${esc(dueText(t))}</span></span>
+    </div>`).join('');
+
+  $('#view').innerHTML = `
+    <div class="dash">
+      <div class="cal-filters" style="margin-bottom:14px">
+        <select class="select" id="d-proj"><option value="">Todos os projetos</option>${projs.map((p) => `<option value="${p.id}" ${f.proj === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+        <select class="select" id="d-who"><option value="">Toda a equipe</option>${S.members.filter((m) => m.active).map((m) => `<option value="${m.id}" ${f.who === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
+      </div>
+      <div class="dtiles">
+        ${tile('Atividades abertas', open.length, `${wavg(open)}% pronto em média`)}
+        ${tile('Atrasadas', late.length, open.length ? `${pct(late.length, open.length)}% das abertas` : '', late.length ? 'bad' : '')}
+        ${tile(`Vencem em até ${DUE_SOON_DAYS} dias`, soon.length, '', soon.length ? 'warn' : '')}
+        ${tile('Concluídas em 30 dias', done30.length, '', 'good')}
+        ${tile('Aguardando aprovação', pend.length, pend.length ? 'solicitações de colaboradores' : '')}
+      </div>
+      <div class="dgrid">
+        <div class="card dcard"><div class="dtitle">Quanto cada projeto está pronto</div><div class="dsub">Média ponderada pelo tamanho das atividades. Clique para abrir o projeto.</div>${progChart}</div>
+        <div class="card dcard"><div class="dtitle">Situação das atividades por projeto</div>${stLegend}${stChart}</div>
+        <div class="card dcard"><div class="dtitle">Carga de trabalho por pessoa</div><div class="dsub">Atividades abertas de cada um.${unassigned ? ` ${unassigned} aberta(s) sem responsável.` : ''}</div>
+          <div class="dlegend">${LOAD.map((l) => `<span><i style="background:${l.color}"></i>${l.label}</span>`).join('')}</div>${loadChart}</div>
+        <div class="card dcard"><div class="dtitle">Entregas previstas por semana</div><div class="dsub">Atividades abertas pela data de entrega (semanas começando na segunda-feira).</div>${weekChart}</div>
+        <div class="card dcard dwide"><div class="dtitle">Atrasadas agora</div>${lateList || '<div class="muted small">Nenhuma atividade atrasada. 🎉</div>'}${late.length > 12 ? `<div class="muted small" style="margin-top:8px">+${late.length - 12} outras</div>` : ''}</div>
+      </div>
+    </div>`;
+  $('#d-proj').onchange = (e) => { f.proj = e.target.value; viewDashboard(); };
+  $('#d-who').onchange = (e) => { f.who = e.target.value; viewDashboard(); };
+  $$('#view [data-proj]').forEach((x) => (x.onclick = () => (location.hash = `#/projeto/${x.dataset.proj}`)));
+  $$('#view [data-task]').forEach((x) => (x.onclick = () => openTask(x.dataset.task)));
+  bindTips($('#view'));
+}
+// dica flutuante ao passar o mouse / tocar nas barras
+function bindTips(root) {
+  let tipEl = document.getElementById('dtip');
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.id = 'dtip'; tipEl.className = 'dtip'; document.body.appendChild(tipEl); }
+  const show = (e) => {
+    const t = e.target.closest('[data-tip]');
+    if (!t || !root.contains(t)) { tipEl.style.display = 'none'; return; }
+    tipEl.textContent = t.dataset.tip;
+    tipEl.style.display = 'block';
+    const x = Math.min(e.clientX + 14, window.innerWidth - tipEl.offsetWidth - 8);
+    const y = e.clientY + 16 + tipEl.offsetHeight > window.innerHeight ? e.clientY - tipEl.offsetHeight - 10 : e.clientY + 16;
+    tipEl.style.left = x + 'px'; tipEl.style.top = y + 'px';
+  };
+  root.addEventListener('mousemove', show);
+  root.addEventListener('click', show);
+  root.addEventListener('mouseleave', () => (tipEl.style.display = 'none'));
 }
 
 // ---------------------------------------------------------------------
@@ -1078,11 +1218,13 @@ function openMeMenu(anchor) {
     <div style="display:flex;gap:10px;align-items:center;padding:6px 6px 10px">${avatar(S.me, 'lg')}
       <div style="min-width:0"><b style="display:block">${esc(S.me.name)}</b><span class="muted small">${esc(S.me.email)}</span></div></div>
     <button class="menu-item" id="m-prof">${ic('user')} Meu perfil</button>
+    ${isAdmin() ? `<button class="menu-item" id="m-dash">${ic('chart')} Painel do gestor</button>` : ''}
     ${perm === 'default' ? `<button class="menu-item" id="m-notif">${ic('bell')} Ativar notificações</button>` : ''}
     <button class="menu-item" id="m-out" style="color:var(--danger)">${ic('logout')} Sair</button>`,
   (el) => {
     $('#m-out', el).onclick = () => { closePopover(); logout(); };
     $('#m-prof', el).onclick = () => { closePopover(); location.hash = '#/perfil'; };
+    const md = $('#m-dash', el); if (md) md.onclick = () => { closePopover(); location.hash = '#/painel'; };
     const n = $('#m-notif', el);
     if (n) n.onclick = () => { closePopover(); requestNotif(); };
   }, { width: 260 });
@@ -1143,6 +1285,7 @@ function renderView(r, isRefresh) {
     case 'modelos': return viewModels();
     case 'calendario': return viewCalendar();
     case 'perfil': return viewProfile();
+    case 'painel': return isAdmin() ? viewDashboard() : (location.hash = '#/inicio');
     default: return viewHome();
   }
 }

@@ -175,3 +175,6 @@ supabase/
 
 ## Meu perfil
 Clique no seu nome (menu lateral) ou na sua foto (celular) → **Meu perfil**: nome, foto, cor, telefone, trocar senha, modo noturno e notificações. O **cargo**, o e-mail e o tipo de acesso só podem ser alterados por administradores (o banco bloqueia).
+
+## Painel do gestor (somente administradores)
+Menu **Painel** (no celular: toque na sua foto → Painel do gestor). Números gerais (abertas, atrasadas, vencendo, concluídas em 30 dias, aguardando aprovação) e gráficos: quanto cada projeto está pronto, situação das atividades por projeto, carga de trabalho por pessoa, entregas previstas por semana e lista das atrasadas. Filtros por projeto e por pessoa; passe o mouse (ou toque) nas barras para ver os números.
