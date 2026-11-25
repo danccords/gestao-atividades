@@ -1414,14 +1414,14 @@ function taskRow(t, { color, showProject }) {
   const cc = S.commentCounts[t.id] || 0;
   return `
   <div class="tr" data-id="${t.id}" style="--gc:${color}">
-    <div class="td">
+    <div class="td col-title" data-act="open" title="Abrir ${esc(t.title)}">
       <div style="min-width:0;flex:1">
-        <div class="task-title" data-act="open" title="${esc(t.title)}">${esc(t.title)}</div>
+        <div class="task-title" title="${esc(t.title)}">${esc(t.title)}</div>
         ${showProject && p ? `<div class="task-proj"><i style="background:${esc(p.color)}"></i>${esc(p.name)}</div>` : ''}
         ${updateLine(t)}
       </div>
       ${subChip(t)}
-      ${cc ? `<span class="cmt-count">${ic('msg')}${cc}</span>` : ''}
+      ${cc ? `<button type="button" class="cmt-count" data-act="comments" data-pop-anchor title="Ver comentários" aria-label="Ver ${cc} comentário(s)">${ic('msg')}${cc}</button>` : ''}
       ${canEditTask(t) && isApproved(t) && t.status !== 'concluido' ? `<button class="upd-mini" data-act="update" title="Escrever atualização do dia" aria-label="Atualização do dia">${ic('plus')}</button>` : ''}
       <span data-act="open" style="display:flex;cursor:pointer">${ic('open', 'open-ic')}</span>
     </div>
@@ -1486,6 +1486,7 @@ function bindViewEvents() {
     else if (act === 'due') popDue(actEl, t);
     else if (act === 'who') popWho(actEl, t);
     else if (act === 'update') dailyUpdate(t);
+    else if (act === 'comments') popComments(actEl, t);
   });
   view.addEventListener('keydown', async (e) => {
     const inp = e.target.closest('[data-add]');
@@ -1516,6 +1517,48 @@ function popStatus(anchor, t) {
   { width: 230 });
   el.anchor = anchor;
 }
+// Comentários num balão abaixo do ícone (sem abrir o painel)
+async function popComments(anchor, t) {
+  const el = openPopover(anchor, `<div class="pc-head"><b>${esc(t.title)}</b><span class="muted small">Atualizações e comentários</span></div>
+    <div class="pc-list"><div class="muted small" style="padding:10px">Carregando…</div></div>
+    ${canEditTask(t) ? `<div class="pc-form"><textarea class="textarea" rows="2" placeholder="Escrever um comentário…" id="pc-body"></textarea><button class="btn btn-sm btn-primary" id="pc-send">Enviar</button></div>` : ''}
+    <button class="btn btn-sm btn-ghost btn-block" id="pc-open">Abrir atividade</button>`,
+  (root) => {
+    $('#pc-open', root).onclick = () => { closePopover(); openTask(t.id); };
+    const send = $('#pc-send', root);
+    if (send) send.onclick = async () => {
+      const body = $('#pc-body', root).value.trim();
+      if (!body) return;
+      send.disabled = true;
+      try {
+        await q(sb.from('task_comments').insert({ task_id: t.id, body, author_email: S.me.email }));
+        $('#pc-body', root).value = '';
+        await reloadLastUpdates();
+        await load();
+        refresh();
+      } catch (e) { toastErr(e); }
+      send.disabled = false;
+    };
+  }, { width: 340 });
+  el.anchor = anchor;
+  const load = async () => {
+    const list = $('.pc-list', el);
+    if (!list) return;
+    try {
+      const rows = await q(sb.from('task_comments').select('*').eq('task_id', t.id).order('created_at', { ascending: false }).limit(30));
+      list.innerHTML = rows.length ? rows.map((c) => {
+        const m = memberByEmail(c.author_email);
+        return `<div class="pc-item">${avatar(m || { name: c.author_email, email: c.author_email })}
+          <div class="pc-tx"><div><b>${esc(m?.name || c.author_email)}</b> <span class="muted small">${relTime(c.created_at)}</span></div><p>${esc(c.body)}</p></div></div>`;
+      }).join('') : '<div class="muted small" style="padding:10px">Nenhum comentário.</div>';
+      // reposiciona se o balão passou da parte de baixo da tela
+      const r = el.getBoundingClientRect();
+      if (r.bottom > innerHeight - 8) { const ar = anchor.getBoundingClientRect(); el.style.top = Math.max(8, Math.min(ar.top - r.height - 6, innerHeight - r.height - 8)) + 'px'; }
+    } catch (e) { list.innerHTML = `<div class="err" style="padding:10px">${esc(e.message || 'Erro ao carregar')}</div>`; }
+  };
+  load();
+}
+
 // Confirmação antes de concluir (depois de concluída, só o gestor reabre)
 function confirmConclusion(t) {
   const falta = subsOf(t.id).filter((x) => !x.done).length;
