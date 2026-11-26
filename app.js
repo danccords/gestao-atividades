@@ -3197,7 +3197,41 @@ function resizeToJpeg(file, max = 1600, quality = 0.82) {
     img.src = url;
   });
 }
-// deixa os quadros de fotos prontos no editor (botões, legendas editáveis, imagens)
+// ---- quadro de fotos estilo Word: tamanho e proporção pelas alças, arrastar para mover ----
+const PH_GAP = 12;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+function photoDefaults(g, f) {
+  const cols = Number(g.dataset.cols) || 2;
+  if (!f.dataset.w) f.dataset.w = String(Math.floor(100 / cols));
+  if (!f.dataset.ar) f.dataset.ar = cols === 1 ? '1.6' : '1.333';
+  if (!f.dataset.px) f.dataset.px = '50';
+  if (!f.dataset.py) f.dataset.py = '50';
+}
+function applyPhotoStyle(f) {
+  f.style.setProperty('--w', f.dataset.w);
+  f.querySelector('.ph-frame')?.style.setProperty('aspect-ratio', String(f.dataset.ar));
+  const img = f.querySelector('img');
+  if (img) img.style.objectPosition = `${f.dataset.px}% ${f.dataset.py}%`;
+}
+function onDrag(el, onMove, onEnd, guard) {
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (guard && !guard(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    const start = { x: e.clientX, y: e.clientY };
+    const ctx = onMove(null, start, e) || {};
+    // escuta na janela inteira: continua funcionando mesmo se a foto mudar de lugar durante o arraste
+    const mv = (ev) => { if (ev.pointerId !== e.pointerId) return; ev.preventDefault(); onMove(ctx, { x: ev.clientX, y: ev.clientY, dx: ev.clientX - start.x, dy: ev.clientY - start.y }, ev); };
+    const up = (ev) => {
+      if (ev.pointerId !== e.pointerId) return;
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      onEnd?.(ctx, ev);
+    };
+    window.addEventListener('pointermove', mv, { passive: false });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  });
+}
 async function preparePhotoGrids(ed, onChange) {
   const grids = [...ed.querySelectorAll('.photo-grid')];
   for (const g of grids) {
@@ -3206,13 +3240,20 @@ async function preparePhotoGrids(ed, onChange) {
     if (!g.querySelector(':scope > .pg-tools')) {
       const tb = document.createElement('div');
       tb.className = 'pg-tools ph-ui';
-      tb.innerHTML = `<span>Fotos por linha:</span>${[1, 2, 3].map((n) => `<button type="button" data-cols="${n}">${n}</button>`).join('')}`;
+      tb.innerHTML = `<span>Tamanho rápido:</span>${[1, 2, 3].map((n) => `<button type="button" data-cols="${n}" title="${n} por linha">${n}</button>`).join('')}<span class="pg-tip">Arraste as alças azuis para mudar o tamanho · ✥ para mover</span>`;
       g.prepend(tb);
       tb.addEventListener('mousedown', (e) => e.preventDefault());
-      tb.onclick = (e) => { const b = e.target.closest('[data-cols]'); if (!b) return; g.dataset.cols = b.dataset.cols; markCols(g); onChange(); };
+      tb.onclick = (e) => {
+        const b = e.target.closest('[data-cols]'); if (!b) return;
+        const n = Number(b.dataset.cols);
+        g.dataset.cols = String(n);
+        g.querySelectorAll('figure.photo').forEach((f) => { f.dataset.w = String(Math.floor(100 / n)); f.dataset.ar = n === 1 ? '1.6' : '1.333'; applyPhotoStyle(f); });
+        markCols(g); onChange();
+      };
     }
     markCols(g);
     for (const f of g.querySelectorAll('figure.photo')) {
+      photoDefaults(g, f);
       const cap = f.querySelector('figcaption') || f.appendChild(document.createElement('figcaption'));
       cap.contentEditable = 'true';
       if (!cap.dataset.bound) {
@@ -3226,23 +3267,110 @@ async function preparePhotoGrids(ed, onChange) {
         });
       }
       if (!f.querySelector('.ph-frame')) { const fr = document.createElement('div'); fr.className = 'ph-frame'; fr.appendChild(f.querySelector('img') || document.createElement('img')); f.prepend(fr); }
-      if (!f.querySelector('img')) f.querySelector('.ph-frame').appendChild(document.createElement('img'));
-      if (!f.querySelector('.ph-btns')) {
-        const bx = document.createElement('div');
-        bx.className = 'ph-btns ph-ui';
-        bx.innerHTML = `<button type="button" data-fit title="Mostrar a foto inteira ou preencher o quadro">⤢</button><button type="button" data-rm title="Remover foto">✕</button>`;
-        f.querySelector('.ph-frame').appendChild(bx);
-        bx.addEventListener('mousedown', (e) => e.preventDefault());
-        bx.querySelector('[data-fit]').onclick = () => { f.dataset.fit = f.dataset.fit === 'contain' ? 'cover' : 'contain'; onChange(); };
-        bx.querySelector('[data-rm]').onclick = async () => {
-          if (!(await confirmDialog('Remover esta foto da página?', { okText: 'Remover', danger: true, title: 'Remover foto' }))) return;
-          const path = f.dataset.path;
-          f.remove();
-          if (!g.querySelector('figure.photo')) g.remove();
-          onChange();
-          if (path) sb.storage.from('fotos-notas').remove([path]).catch(() => {});
-        };
+      const frame = f.querySelector('.ph-frame');
+      if (!f.querySelector('img')) frame.appendChild(document.createElement('img'));
+      const img = f.querySelector('img');
+      img.draggable = false;
+      applyPhotoStyle(f);
+      if (f.querySelector('.ph-btns')) continue;
+      // botões
+      const bx = document.createElement('div');
+      bx.className = 'ph-btns ph-ui';
+      bx.innerHTML = `<button type="button" data-move title="Arrastar para mover a foto">✥</button><button type="button" data-fit title="Foto inteira / preencher o quadro">⤢</button><button type="button" data-rm title="Remover foto">✕</button>`;
+      frame.appendChild(bx);
+      bx.addEventListener('mousedown', (e) => e.preventDefault());
+      bx.querySelector('[data-fit]').onclick = () => { f.dataset.fit = f.dataset.fit === 'contain' ? 'cover' : 'contain'; onChange(); };
+      bx.querySelector('[data-rm]').onclick = async () => {
+        if (!(await confirmDialog('Remover esta foto da página?', { okText: 'Remover', danger: true, title: 'Remover foto' }))) return;
+        const path = f.dataset.path;
+        const grid = f.closest('.photo-grid');
+        f.remove();
+        if (grid && !grid.querySelector('figure.photo')) grid.remove();
+        onChange();
+        if (path) sb.storage.from('fotos-notas').remove([path]).catch(() => {});
+      };
+      // alças: lateral (largura), baixo (altura), canto (tamanho mantendo a proporção)
+      for (const kind of ['e', 's', 'se']) {
+        const h = document.createElement('span');
+        h.className = `ph-h ph-h-${kind} ph-ui`;
+        frame.appendChild(h);
+        onDrag(h, (ctx, p) => {
+          const grid = f.closest('.photo-grid');
+          if (!ctx) {
+            f.classList.add('ph-active');
+            const gw = grid.clientWidth - parseFloat(getComputedStyle(grid).paddingLeft) - parseFloat(getComputedStyle(grid).paddingRight);
+            const r = frame.getBoundingClientRect();
+            return { gw, w0: r.width, h0: r.height };
+          }
+          let w = ctx.w0, hgt = ctx.h0;
+          if (kind === 'e') w = ctx.w0 + p.dx;
+          if (kind === 's') hgt = ctx.h0 + p.dy;
+          if (kind === 'se') { w = ctx.w0 + p.dx; hgt = w * (ctx.h0 / ctx.w0); }
+          w = clamp(w, 80, ctx.gw);
+          hgt = clamp(hgt, 60, 1400);
+          const pct = clamp(((w + PH_GAP) / (ctx.gw + PH_GAP)) * 100, 12, 100);
+          f.dataset.w = pct.toFixed(1);
+          f.dataset.ar = clamp(w / hgt, 0.25, 4).toFixed(3);
+          applyPhotoStyle(f);
+        }, () => { f.classList.remove('ph-active'); onChange(); });
       }
+      // arrastar a imagem: muda o enquadramento (qual parte aparece no quadro)
+      onDrag(img, (ctx, p) => {
+        if (!ctx) { const r = frame.getBoundingClientRect(); return { r, px: Number(f.dataset.px), py: Number(f.dataset.py) }; }
+        if (f.dataset.fit === 'contain') return;
+        f.dataset.px = clamp(ctx.px - (p.dx / ctx.r.width) * 100, 0, 100).toFixed(0);
+        f.dataset.py = clamp(ctx.py - (p.dy / ctx.r.height) * 100, 0, 100).toFixed(0);
+        applyPhotoStyle(f);
+      }, () => onChange(), (e) => e.pointerType !== 'touch' || f.classList.contains('ph-sel'));
+      // no celular: toque na foto para selecionar (aí o arraste ajusta o enquadramento; sem selecionar, a página rola normal)
+      img.addEventListener('click', () => {
+        ed.querySelectorAll('figure.photo.ph-sel').forEach((x) => x !== f && x.classList.remove('ph-sel'));
+        f.classList.add('ph-sel');
+      });
+      // ✥ mover: arrasta a foto para outra posição (inclusive para outro quadro de fotos)
+      onDrag(bx.querySelector('[data-move]'), (ctx, p) => {
+        if (!ctx) {
+          f.classList.add('ph-moving');
+          const ghost = f.cloneNode(true); ghost.className = 'photo ph-ghost'; ghost.querySelectorAll('.ph-ui').forEach((x) => x.remove());
+          ghost.style.width = f.getBoundingClientRect().width + 'px';
+          document.body.appendChild(ghost);
+          return { ghost };
+        }
+        ctx.ghost.style.left = p.x + 12 + 'px'; ctx.ghost.style.top = p.y + 12 + 'px';
+        ctx.ghost.style.display = 'none';
+        const under = document.elementFromPoint(p.x, p.y);
+        ctx.ghost.style.display = '';
+        const target = under?.closest?.('figure.photo');
+        const grid = under?.closest?.('.photo-grid');
+        if (target && target !== f && ed.contains(target)) {
+          const r = target.getBoundingClientRect();
+          if (p.x < r.left + r.width / 2) target.before(f); else target.after(f);
+        } else if (grid && ed.contains(grid) && !grid.contains(f)) {
+          grid.appendChild(f);
+        } else if (!grid && under && ed.contains(under) && under !== ed) {
+          // soltou no meio do texto: cria um quadro de fotos ali (antes ou depois do parágrafo)
+          let blk = under; while (blk && blk.parentNode !== ed) blk = blk.parentNode;
+          if (blk && blk.nodeType === 1) {
+            const r = blk.getBoundingClientRect();
+            const before = p.y < r.top + r.height / 2;
+            const sib = before ? blk.previousElementSibling : blk.nextElementSibling;
+            if (sib?.classList?.contains('photo-grid')) { if (!sib.contains(f)) (before ? sib.appendChild(f) : sib.querySelector('figure.photo') ? sib.querySelector('figure.photo').before(f) : sib.appendChild(f)); }
+            else {
+              const ng = document.createElement('div');
+              ng.className = 'photo-grid'; ng.dataset.cols = f.closest('.photo-grid')?.dataset.cols || '2';
+              if (before) blk.before(ng); else blk.after(ng);
+              ng.appendChild(f);
+              ctx.newGrid = true;
+            }
+          }
+        }
+      }, (ctx) => {
+        ctx.ghost?.remove();
+        f.classList.remove('ph-moving');
+        ed.querySelectorAll('.photo-grid').forEach((gg) => { if (!gg.querySelector('figure.photo')) gg.remove(); });
+        if (ctx.newGrid) preparePhotoGrids(ed, onChange);
+        onChange();
+      });
     }
   }
   // carrega as imagens (endereços temporários e privados)
@@ -3254,19 +3382,20 @@ async function preparePhotoGrids(ed, onChange) {
     } catch (e) { console.warn(e); }
   }
   for (const f of ed.querySelectorAll('figure.photo')) {
-    const img = f.querySelector('img');
+    const im = f.querySelector('img');
     const u = PHOTO_URLS.get(f.dataset.path);
-    if (img && u && img.getAttribute('src') !== u) img.src = u;
+    if (im && u && im.getAttribute('src') !== u) im.src = u;
   }
 }
-function markCols(g) { g.querySelectorAll('.pg-tools [data-cols]').forEach((b) => b.classList.toggle('on', b.dataset.cols === (g.dataset.cols || '2'))); }
+function markCols(g) { g.querySelectorAll('.pg-tools [data-cols]').forEach((b) => b.classList.toggle('on', b.dataset.cols === (g.dataset.cols || '2') && [...g.querySelectorAll('figure.photo')].every((f) => Math.abs(Number(f.dataset.w) - Math.floor(100 / Number(b.dataset.cols))) < 0.5))); }
 // HTML para salvar: sem botões, sem endereços temporários
 function serializeEditor(ed) {
   const c = ed.cloneNode(true);
   c.querySelectorAll('.ph-ui, .photo.uploading').forEach((x) => x.remove());
   c.querySelectorAll('[contenteditable]').forEach((x) => x.removeAttribute('contenteditable'));
   c.querySelectorAll('[data-bound]').forEach((x) => x.removeAttribute('data-bound'));
-  c.querySelectorAll('figure.photo img').forEach((x) => x.removeAttribute('src'));
+  c.querySelectorAll('figure.photo img').forEach((x) => { x.removeAttribute('src'); x.removeAttribute('style'); x.removeAttribute('draggable'); });
+  c.querySelectorAll('figure.photo, figure.photo .ph-frame').forEach((x) => { x.removeAttribute('style'); x.classList.remove('ph-active', 'ph-moving', 'ph-sel'); });
   return c.innerHTML;
 }
 async function removeNotePhotos(noteId) {
@@ -3299,7 +3428,8 @@ function sanitize(html) {
             || (child.tagName === 'LI' && a.name === 'data-checked')
             || (child.tagName === 'DIV' && a.name === 'class' && ['photo-grid', 'ph-frame'].includes(a.value))
             || (child.tagName === 'DIV' && a.name === 'data-cols' && /^[123]$/.test(a.value))
-            || (child.tagName === 'FIGURE' && ((a.name === 'class' && a.value === 'photo') || a.name === 'data-path' || (a.name === 'data-fit' && /^(cover|contain)$/.test(a.value))));
+            || (child.tagName === 'FIGURE' && ((a.name === 'class' && a.value === 'photo') || a.name === 'data-path' || (a.name === 'data-fit' && /^(cover|contain)$/.test(a.value))
+                || (['data-w', 'data-ar', 'data-px', 'data-py'].includes(a.name) && /^\d{1,3}(\.\d{1,3})?$/.test(a.value))));
           if (!keep) child.removeAttribute(a.name);
         }
         if (child.tagName === 'A') { child.setAttribute('target', '_blank'); child.setAttribute('rel', 'noopener'); }
@@ -3698,6 +3828,7 @@ function mountEditor(note, renderList) {
   };
   // --- fotos ---
   let photoRange = null;
+  ed.addEventListener('pointerdown', (e) => { if (!e.target.closest('figure.photo')) ed.querySelectorAll('figure.photo.ph-sel').forEach((x) => x.classList.remove('ph-sel')); });
   $('#ph-file').onchange = async (e) => {
     const files = [...e.target.files].filter((f) => f.type.startsWith('image/'));
     if (!files.length) return;

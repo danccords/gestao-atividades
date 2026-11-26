@@ -190,7 +190,7 @@ Mudou a %, o status acompanha; escolheu um status, a % vai para a faixa dele. Co
 
 ## Fotos nas anotações (atualização 15)
 - Botão **Foto** na barra do editor: escolha uma ou várias fotos (no celular, câmera ou galeria). Elas são reduzidas (máx. 1600 px) e guardadas numa pasta **privada** do Supabase Storage (`fotos-notas/<usuário>/<anotação>/`), que só o dono vê.
-- As fotos ficam em **quadros de tamanho fixo** (4:3), 1, 2 ou 3 por linha, com legenda; ⤢ alterna entre preencher o quadro (corta as bordas) e mostrar a foto inteira; ✕ remove.
+- Estilo Word: **alça lateral** muda a largura, **alça de baixo** muda a altura (proporção), **alça do canto** aumenta/diminui mantendo a proporção; **arrastar a foto** escolhe o enquadramento; **✥** arrasta a foto para outra posição (inclusive entre parágrafos); ⤢ foto inteira/preencher; ✕ remove. Botões 1/2/3 deixam todas do mesmo tamanho. No celular, toque na foto para selecionar antes de mexer.
 - O PDF coloca as fotos nos mesmos quadros, várias por página.
 - Modelo novo: **Relatório de visita ao fornecedor**.
 - O backup das anotações guarda os textos; as fotos ficam no Storage.

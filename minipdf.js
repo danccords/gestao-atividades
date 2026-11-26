@@ -159,37 +159,61 @@ export function buildNotePdf({ company = '', author = '', date = '', title = '',
       return;
     }
     if (tag === 'DIV' && el.classList.contains('photo-grid')) {
+      // mesmo layout da tela: cada foto tem largura (% da linha) e proporção próprias; quebra de linha automática
       const figs = [...el.querySelectorAll('figure.photo')];
       const cols = Math.min(3, Math.max(1, Number(el.dataset.cols) || 2));
       const gap = 10;
-      const cw = (width - gap * (cols - 1)) / cols;
-      const ch = cols === 1 ? cw * 0.62 : cw * 0.75;     // quadro de medida fixa (4:3; 1 por linha um pouco mais baixo)
+      const items = figs.map((f) => {
+        const wp = Math.min(100, Math.max(10, Number(f.dataset.w) || Math.floor(100 / cols)));
+        const ar = Math.min(4, Math.max(0.25, Number(f.dataset.ar) || (cols === 1 ? 1.6 : 1.333)));
+        const cw = Math.min(width, ((width + gap) * wp) / 100 - gap);
+        let ch = cw / ar;
+        const maxH = PH - MT - MB - 60;
+        if (ch > maxH) ch = maxH;
+        const caps = wrap([{ text: (f.querySelector('figcaption')?.textContent || '').trim(), f: 'R', color: '#4b5563' }], cw, 9);
+        const capH = caps.length === 1 && !caps[0].length ? 0 : caps.length * 12;
+        return { f, cw, ch, caps, capH };
+      });
+      const rows = [];
+      let cur = [], used = 0;
+      for (const it of items) {
+        const need = (cur.length ? gap : 0) + it.cw;
+        if (cur.length && used + need > width + 0.5) { rows.push(cur); cur = []; used = 0; }
+        used += (cur.length ? gap : 0) + it.cw; cur.push(it);
+      }
+      if (cur.length) rows.push(cur);
       y -= 6;
-      for (let i = 0; i < figs.length; i += cols) {
-        const row = figs.slice(i, i + cols);
-        const caps = row.map((f) => wrap([{ text: (f.querySelector('figcaption')?.textContent || '').trim(), f: 'R', color: '#4b5563' }], cw, 9));
-        const capH = Math.max(...caps.map((c) => (c.length === 1 && !c[0].length ? 0 : c.length * 12)));
-        ensure(ch + capH + 14);
+      for (const row of rows) {
+        const rowH = Math.max(...row.map((it) => it.ch + it.capH));
+        ensure(rowH + 14);
         const top = y;
-        row.forEach((f, k) => {
-          const x0 = x + k * (cw + gap), y0 = top - ch;
+        let cx0 = x;
+        for (const it of row) {
+          const { f, cw, ch, caps } = it;
+          const x0 = cx0, y0 = top - ch;
           const im = imgName(f.dataset.path);
           rect(x0, y0, cw, ch, null, '#f3f4f6');
           if (im) {
             const cover = f.dataset.fit !== 'contain';
             const sc = cover ? Math.max(cw / im.w, ch / im.h) : Math.min(cw / im.w, ch / im.h);
             const dw = im.w * sc, dh = im.h * sc;
-            const dx = x0 + (cw - dw) / 2, dy = y0 + (ch - dh) / 2;
+            const px = cover ? (Number(f.dataset.px ?? 50) / 100) : 0.5, py = cover ? (Number(f.dataset.py ?? 50) / 100) : 0.5;
+            const dx = x0 + (cw - dw) * px, dy = y0 + (ch - dh) * (1 - py);
             ops.push(`q ${x0.toFixed(2)} ${y0.toFixed(2)} ${cw.toFixed(2)} ${ch.toFixed(2)} re W n ${dw.toFixed(2)} 0 0 ${dh.toFixed(2)} ${dx.toFixed(2)} ${dy.toFixed(2)} cm /${im.name} Do Q`);
           } else {
             text(x0 + 8, y0 + ch / 2, 'Foto indisponível', 'I', 9, '#9ca3af');
           }
           rect(x0, y0, cw, ch, '#d1d5db');
-          // legenda
           let cy = y0 - 3;
-          for (const ln of caps[k]) { cy -= 12; let cx = x0; for (const seg of ln) { if (!seg.space) text(cx, cy + 2, seg.s, seg.f, 9, seg.color); cx += seg.w; } }
-        });
-        y = top - ch - capH - 14;
+          for (const ln of caps) {
+            cy -= 12;
+            const lw = ln.reduce((a, sg) => a + sg.w, 0);
+            let cx = x0 + Math.max(0, (cw - lw) / 2);
+            for (const seg of ln) { if (!seg.space) text(cx, cy + 2, seg.s, seg.f, 9, seg.color); cx += seg.w; }
+          }
+          cx0 += cw + gap;
+        }
+        y = top - rowH - 14;
       }
       return;
     }

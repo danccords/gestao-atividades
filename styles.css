@@ -1044,25 +1044,38 @@ button.cmt-count:hover { background: var(--primary-soft); border-color: var(--bo
 .pc-form { display: flex; gap: 6px; align-items: flex-end; padding: 8px 0 6px; border-top: 1px solid var(--border); }
 .pc-form .textarea { flex: 1; min-height: 40px; font-size: 13px; }
 
-/* Fotos nas anotações: quadros de medida fixa */
+/* Fotos nas anotações: quadros redimensionáveis (estilo Word) */
 .tb-photo { display: inline-flex; align-items: center; gap: 5px; width: auto !important; padding: 0 10px !important; font-weight: 600; color: var(--primary) !important; }
 .tb-photo svg { width: 16px; height: 16px; }
-.editor .photo-grid { --cols: 2; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 12px; margin: 12px 0; padding: 30px 10px 10px; border: 1px dashed var(--border-strong); border-radius: 10px; position: relative; user-select: none; }
-.editor .photo-grid[data-cols="1"] { --cols: 1; }
-.editor .photo-grid[data-cols="3"] { --cols: 3; }
-.editor .pg-tools { position: absolute; top: 4px; left: 10px; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-3); }
-.editor .pg-tools button { width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12px; cursor: pointer; padding: 0; }
+.editor .photo-grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; margin: 12px 0; padding: 30px 10px 10px; border: 1px dashed var(--border-strong); border-radius: 10px; position: relative; user-select: none; }
+.editor .pg-tools { position: absolute; top: 4px; left: 10px; right: 10px; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; }
+.editor .pg-tools .pg-tip { margin-left: 8px; overflow: hidden; text-overflow: ellipsis; }
+.editor .pg-tools button { width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12px; cursor: pointer; padding: 0; flex: none; }
 .editor .pg-tools button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
-.editor figure.photo { margin: 0; min-width: 0; }
-.editor .ph-frame { position: relative; aspect-ratio: 4 / 3; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.editor .photo-grid[data-cols="1"] .ph-frame { aspect-ratio: 16 / 10; }
-.editor .ph-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.editor figure.photo[data-fit="contain"] .ph-frame img { object-fit: contain; }
+.editor figure.photo { --w: 50; margin: 0; min-width: 0; width: calc((100% + 12px) * var(--w) / 100 - 12px); flex: none; }
+.editor .ph-frame { position: relative; aspect-ratio: 4 / 3; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; overflow: visible; }
+.editor .ph-frame img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 4px; cursor: grab; touch-action: pan-x pan-y pinch-zoom; }
+.editor figure.photo.ph-sel .ph-frame img { touch-action: none; }
+.editor figure.photo.ph-sel .ph-frame { outline: 2px solid var(--primary); outline-offset: 1px; }
+.editor figure.photo[data-fit="contain"] .ph-frame img { object-fit: contain; cursor: default; }
 .editor .ph-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: var(--text-3); }
 .editor figcaption { font-size: 12.5px; color: var(--text-2); text-align: center; padding: 5px 2px 0; outline: none; min-height: 1.2em; user-select: text; }
 .editor figcaption:focus { background: var(--primary-soft); border-radius: 4px; }
-.editor .ph-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
-.editor .ph-btns button { width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .55); color: #fff; font-size: 14px; cursor: pointer; padding: 0; }
+.editor .ph-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; z-index: 2; }
+.editor .ph-btns button { width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .55); color: #fff; font-size: 14px; cursor: pointer; padding: 0; touch-action: none; }
+.editor .ph-btns button[data-move] { cursor: move; }
 .editor .ph-btns button:hover { background: rgba(0, 0, 0, .8); }
-@media (max-width: 860px) { .editor .photo-grid[data-cols="3"] { --cols: 2; } }
+/* alças de redimensionar */
+.editor .ph-h { position: absolute; z-index: 3; pointer-events: auto; background: var(--primary); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.15); touch-action: none; opacity: 0; transition: opacity .15s; }
+.editor figure.photo:hover .ph-h, .editor figure.photo.ph-active .ph-h, .editor figure.photo:focus-within .ph-h { opacity: 1; }
+@media (hover: none) { .editor .ph-h, .editor .ph-btns { opacity: 0; pointer-events: none; } .editor figure.photo.ph-sel .ph-h, .editor figure.photo.ph-sel .ph-btns { opacity: 1; pointer-events: auto; } .editor figure.photo .ph-btns button { width: 34px; height: 34px; } .editor .ph-h-se { width: 22px; height: 22px; right: -11px; bottom: -11px; } }
+.editor .ph-h-e { right: -7px; top: 50%; width: 12px; height: 34px; margin-top: -17px; border-radius: 6px; cursor: ew-resize; }
+.editor .ph-h-s { bottom: -7px; left: 50%; width: 34px; height: 12px; margin-left: -17px; border-radius: 6px; cursor: ns-resize; }
+.editor .ph-h-se { right: -8px; bottom: -8px; width: 16px; height: 16px; border-radius: 50%; cursor: nwse-resize; }
+.editor figure.photo.ph-active .ph-frame { outline: 2px solid var(--primary); outline-offset: 1px; }
+.editor figure.photo.ph-moving { opacity: .35; }
+.ph-ghost { position: fixed; z-index: 9999; pointer-events: none; opacity: .85; box-shadow: var(--shadow-lg); border-radius: 6px; background: var(--surface); margin: 0; }
+.ph-ghost .ph-frame { aspect-ratio: 4 / 3; overflow: hidden; border-radius: 6px; }
+.ph-ghost img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ph-ghost figcaption { display: none; }
 .editor figcaption:empty::before { content: "Toque para escrever uma legenda"; color: var(--text-3); font-style: italic; }
