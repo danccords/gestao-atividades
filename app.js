@@ -101,6 +101,7 @@ const P = {
   code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
   minus: '<path d="M5 12h14"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
   send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
   spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
@@ -3167,7 +3168,117 @@ function inviteModal(m) {
 // ---------------------------------------------------------------------
 // TELA: Anotações (privadas, estilo Notion)
 // ---------------------------------------------------------------------
-const ALLOWED_TAGS = new Set(['P', 'BR', 'H1', 'H2', 'H3', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'A', 'DIV', 'SPAN']);
+// ---------- Fotos nas anotações ----------
+const PHOTO_URLS = new Map();   // caminho -> endereço para mostrar (temporário)
+let UID = null;
+async function currentUid() {
+  if (UID) return UID;
+  const { data } = await sb.auth.getSession();
+  UID = data.session?.user?.id;
+  if (!UID) throw new Error('Sua sessão expirou. Entre de novo para enviar fotos.');
+  return UID;
+}
+// reduz a foto (máx. 1600 px no lado maior) e converte para JPEG
+function resizeToJpeg(file, max = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error('Não foi possível processar a foto.'))), 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Formato de imagem não suportado. Tente uma foto JPG ou PNG.')); };
+    img.src = url;
+  });
+}
+// deixa os quadros de fotos prontos no editor (botões, legendas editáveis, imagens)
+async function preparePhotoGrids(ed, onChange) {
+  const grids = [...ed.querySelectorAll('.photo-grid')];
+  for (const g of grids) {
+    if (!g.querySelector('figure.photo')) { g.remove(); continue; }
+    g.contentEditable = 'false';
+    if (!g.querySelector(':scope > .pg-tools')) {
+      const tb = document.createElement('div');
+      tb.className = 'pg-tools ph-ui';
+      tb.innerHTML = `<span>Fotos por linha:</span>${[1, 2, 3].map((n) => `<button type="button" data-cols="${n}">${n}</button>`).join('')}`;
+      g.prepend(tb);
+      tb.addEventListener('mousedown', (e) => e.preventDefault());
+      tb.onclick = (e) => { const b = e.target.closest('[data-cols]'); if (!b) return; g.dataset.cols = b.dataset.cols; markCols(g); onChange(); };
+    }
+    markCols(g);
+    for (const f of g.querySelectorAll('figure.photo')) {
+      const cap = f.querySelector('figcaption') || f.appendChild(document.createElement('figcaption'));
+      cap.contentEditable = 'true';
+      if (!cap.dataset.bound) {
+        cap.dataset.bound = '1';
+        cap.addEventListener('keydown', (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {   // selecionar tudo só na legenda
+            e.preventDefault(); e.stopPropagation();
+            const r = document.createRange(); r.selectNodeContents(cap); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(r);
+          }
+          if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); }
+        });
+      }
+      if (!f.querySelector('.ph-frame')) { const fr = document.createElement('div'); fr.className = 'ph-frame'; fr.appendChild(f.querySelector('img') || document.createElement('img')); f.prepend(fr); }
+      if (!f.querySelector('img')) f.querySelector('.ph-frame').appendChild(document.createElement('img'));
+      if (!f.querySelector('.ph-btns')) {
+        const bx = document.createElement('div');
+        bx.className = 'ph-btns ph-ui';
+        bx.innerHTML = `<button type="button" data-fit title="Mostrar a foto inteira ou preencher o quadro">⤢</button><button type="button" data-rm title="Remover foto">✕</button>`;
+        f.querySelector('.ph-frame').appendChild(bx);
+        bx.addEventListener('mousedown', (e) => e.preventDefault());
+        bx.querySelector('[data-fit]').onclick = () => { f.dataset.fit = f.dataset.fit === 'contain' ? 'cover' : 'contain'; onChange(); };
+        bx.querySelector('[data-rm]').onclick = async () => {
+          if (!(await confirmDialog('Remover esta foto da página?', { okText: 'Remover', danger: true, title: 'Remover foto' }))) return;
+          const path = f.dataset.path;
+          f.remove();
+          if (!g.querySelector('figure.photo')) g.remove();
+          onChange();
+          if (path) sb.storage.from('fotos-notas').remove([path]).catch(() => {});
+        };
+      }
+    }
+  }
+  // carrega as imagens (endereços temporários e privados)
+  const need = [...ed.querySelectorAll('figure.photo')].map((f) => f.dataset.path).filter((p) => p && !PHOTO_URLS.has(p));
+  if (need.length) {
+    try {
+      const { data } = await sb.storage.from('fotos-notas').createSignedUrls(need, 3600);
+      (data || []).forEach((x) => x.signedUrl && PHOTO_URLS.set(x.path, x.signedUrl));
+    } catch (e) { console.warn(e); }
+  }
+  for (const f of ed.querySelectorAll('figure.photo')) {
+    const img = f.querySelector('img');
+    const u = PHOTO_URLS.get(f.dataset.path);
+    if (img && u && img.getAttribute('src') !== u) img.src = u;
+  }
+}
+function markCols(g) { g.querySelectorAll('.pg-tools [data-cols]').forEach((b) => b.classList.toggle('on', b.dataset.cols === (g.dataset.cols || '2'))); }
+// HTML para salvar: sem botões, sem endereços temporários
+function serializeEditor(ed) {
+  const c = ed.cloneNode(true);
+  c.querySelectorAll('.ph-ui, .photo.uploading').forEach((x) => x.remove());
+  c.querySelectorAll('[contenteditable]').forEach((x) => x.removeAttribute('contenteditable'));
+  c.querySelectorAll('[data-bound]').forEach((x) => x.removeAttribute('data-bound'));
+  c.querySelectorAll('figure.photo img').forEach((x) => x.removeAttribute('src'));
+  return c.innerHTML;
+}
+async function removeNotePhotos(noteId) {
+  try {
+    const uid = await currentUid();
+    const { data } = await sb.storage.from('fotos-notas').list(`${uid}/${noteId}`, { limit: 1000 });
+    if (data?.length) await sb.storage.from('fotos-notas').remove(data.map((x) => `${uid}/${noteId}/${x.name}`));
+  } catch (e) { console.warn(e); }
+}
+
+const ALLOWED_TAGS = new Set(['P', 'BR', 'H1', 'H2', 'H3', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'A', 'DIV', 'SPAN', 'FIGURE', 'FIGCAPTION', 'IMG']);
+const PHOTO_PATH_RE = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[\w-]+\.jpg$/;
 function sanitize(html) {
   const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
   const walk = (node) => {
@@ -3179,10 +3290,16 @@ function sanitize(html) {
           child.replaceWith(...child.childNodes);
           continue;
         }
+        // fotos: só a estrutura do quadro de fotos é aceita
+        if (child.tagName === 'FIGURE' && !(child.classList.contains('photo') && PHOTO_PATH_RE.test(child.dataset.path || ''))) { child.remove(); continue; }
+        if (child.tagName === 'IMG' && child.parentElement?.closest?.('figure.photo') == null) { child.remove(); continue; }
         for (const a of [...child.attributes]) {
           const keep = (child.tagName === 'A' && a.name === 'href' && /^(https?:|mailto:)/i.test(a.value))
             || (child.tagName === 'UL' && a.name === 'class' && a.value === 'checklist')
-            || (child.tagName === 'LI' && a.name === 'data-checked');
+            || (child.tagName === 'LI' && a.name === 'data-checked')
+            || (child.tagName === 'DIV' && a.name === 'class' && ['photo-grid', 'ph-frame'].includes(a.value))
+            || (child.tagName === 'DIV' && a.name === 'data-cols' && /^[123]$/.test(a.value))
+            || (child.tagName === 'FIGURE' && ((a.name === 'class' && a.value === 'photo') || a.name === 'data-path' || (a.name === 'data-fit' && /^(cover|contain)$/.test(a.value))));
           if (!keep) child.removeAttribute(a.name);
         }
         if (child.tagName === 'A') { child.setAttribute('target', '_blank'); child.setAttribute('rel', 'noopener'); }
@@ -3228,6 +3345,17 @@ const NOTE_TEMPLATES = [
 <h2>Medições / dados coletados</h2><ul><li></li></ul>
 <h2>Fotos e anexos</h2><p>Indique onde estão salvos (pasta, link).</p>
 <h2>Pendências</h2>${CK(['Pendência — Responsável — Prazo'])}` },
+  { key: 'fornecedor', icon: '🏭', name: 'Relatório de visita ao fornecedor', desc: 'Inspeção de fabricação: dados, não conformidades, fotos e pendências',
+    title: () => `Relatório de visita — ${todayBR()}`,
+    html: () => `<p><b>Fornecedor:</b> &nbsp; <b>Local:</b> </p>
+<p><b>Data da visita:</b> ${todayBR()} &nbsp; <b>Pedido / OC:</b> </p>
+<p><b>Equipamentos inspecionados:</b> </p>
+<p><b>Participantes:</b> ${esc(S.me?.name || '')}</p>
+<h2>Objetivo da visita</h2><p>Inspeção de fabricação e conferência com o projeto e a lista de materiais.</p>
+<h2>Observações e não conformidades</h2>${CK(['Item / equipamento — o que foi encontrado — o que era esperado'])}
+<h2>Registro fotográfico</h2><p>Toque em <b>Foto</b> na barra acima para adicionar as fotos. Elas ficam em quadros, várias por página.</p>
+<h2>Pendências e ações</h2>${CK(['O que fazer — Responsável — Prazo'])}
+<h2>Conclusão</h2><p>Aprovado / Aprovado com ressalvas / Reprovado</p>` },
   { key: 'inspecao', icon: '✅', name: 'Checklist de inspeção', desc: 'Lista de verificação com observações',
     title: () => `Inspeção — ${todayBR()}`,
     html: () => `<p><b>Data:</b> ${todayBR()} &nbsp; <b>Equipamento / item:</b> </p>
@@ -3264,9 +3392,22 @@ async function exportNotePdf(note, html) {
   try {
     const { buildNotePdf } = await import('./minipdf.js');
     const title = note.title || 'Anotação';
+    // baixa as fotos da página para colocar no PDF
+    const images = {};
+    const paths = [...new DOMParser().parseFromString(html, 'text/html').querySelectorAll('figure.photo')].map((f) => f.dataset.path).filter(Boolean);
+    if (paths.length) toast(`Preparando ${paths.length} foto${paths.length > 1 ? 's' : ''}…`);
+    for (const path of paths) {
+      try {
+        const { data: blob, error } = await sb.storage.from('fotos-notas').download(path);
+        if (error) throw error;
+        const bmp = await createImageBitmap(blob);
+        images[path] = { bytes: new Uint8Array(await blob.arrayBuffer()), w: bmp.width, h: bmp.height };
+        bmp.close?.();
+      } catch (e) { console.warn('foto', path, e); }
+    }
     const bytes = buildNotePdf({
       company: COMPANY_NAME, author: S.me?.name || '', date: new Date().toLocaleDateString('pt-BR'),
-      title, html: sanitize(html), footer: `Gerado pelo ${APP_NAME}`,
+      title, html: sanitize(html), footer: `Gerado pelo ${APP_NAME}`, images,
     });
     const name = title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\- ]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'anotacao';
     const file = new File([bytes], `${name}.pdf`, { type: 'application/pdf' });
@@ -3372,6 +3513,9 @@ function mountEditor(note, renderList) {
         <button data-cmd="code" title="Bloco de código">${ic('code')}</button>
         <button data-cmd="hr" title="Divisória">${ic('minus')}</button>
         <button data-cmd="link" title="Link">${ic('link')}</button>
+        <span class="sep"></span>
+        <button data-cmd="photo" title="Adicionar fotos" class="tb-photo">${ic('camera')} <span>Foto</span></button>
+        <input type="file" id="ph-file" accept="image/*" multiple hidden />
       </div>
       <div class="editor" id="ed" contenteditable="true" spellcheck="true"
         data-placeholder="Comece a escrever... Atalhos: # título, - lista, [] checklist, > citação"></div>
@@ -3380,9 +3524,10 @@ function mountEditor(note, renderList) {
   const ed = $('#ed');
   const titleEl = $('#note-title');
   ed.innerHTML = sanitize(note.content) || '<p><br></p>';
+  preparePhotoGrids(ed, () => touch());
   try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* ignore */ }
 
-  const updateEmpty = () => ed.classList.toggle('is-empty', !ed.textContent.trim() && !ed.querySelector('hr,li,img'));
+  const updateEmpty = () => ed.classList.toggle('is-empty', !ed.textContent.trim() && !ed.querySelector('hr,li,img,figure'));
   updateEmpty();
 
   // --- salvar automaticamente ---
@@ -3392,7 +3537,8 @@ function mountEditor(note, renderList) {
     if (!dirty) return;
     dirty = false;
     clearTimeout(timer);
-    const patch = { title: titleEl.value.trim(), content: ed.innerHTML === '<p><br></p>' ? '' : ed.innerHTML, icon: note.icon, updated_at: new Date().toISOString() };
+    const html = serializeEditor(ed);
+    const patch = { title: titleEl.value.trim(), content: html === '<p><br></p>' ? '' : html, icon: note.icon, updated_at: new Date().toISOString() };
     savedEl.textContent = 'Salvando...';
     saving = (async () => {
       try {
@@ -3425,7 +3571,7 @@ function mountEditor(note, renderList) {
   };
 
   // --- PDF e modelo ---
-  $('#n-pdf').onclick = async () => { await save(); exportNotePdf({ ...note, title: titleEl.value.trim() }, ed.innerHTML); };
+  $('#n-pdf').onclick = async () => { dirty = true; await save(); exportNotePdf({ ...note, title: titleEl.value.trim() }, serializeEditor(ed)); };
   // --- fixar / excluir ---
   $('#n-pin').onclick = async () => {
     try {
@@ -3443,6 +3589,7 @@ function mountEditor(note, renderList) {
       S.leaveHook = null;
       await q(sb.from('notes').delete().eq('id', note.id));
       S.notes = S.notes.filter((n) => n.id !== note.id);
+      removeNotePhotos(note.id);
       location.hash = '#/notas';
     } catch (e) { toastErr(e); }
   };
@@ -3511,6 +3658,13 @@ function mountEditor(note, renderList) {
       case 'ol': makeList('ol'); break;
       case 'check': makeList('check'); break;
       case 'hr': document.execCommand('insertHorizontalRule'); break;
+      case 'photo': {
+        const sel = getSelection();
+        photoRange = sel.rangeCount && ed.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+        $('#ph-file').value = '';
+        $('#ph-file').click();
+        return;
+      }
       case 'link': {
         const sel = getSelection();
         const range = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
@@ -3539,6 +3693,45 @@ function mountEditor(note, renderList) {
       }
       default: document.execCommand(cmd);
     }
+    updateEmpty();
+    touch();
+  };
+  // --- fotos ---
+  let photoRange = null;
+  $('#ph-file').onchange = async (e) => {
+    const files = [...e.target.files].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;
+    // onde inserir: no quadro de fotos onde está o cursor, ou um quadro novo depois do parágrafo atual
+    let grid = photoRange && photoRange.startContainer.parentElement?.closest?.('.photo-grid');
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.className = 'photo-grid'; grid.dataset.cols = '2';
+      let anchor = photoRange ? photoRange.startContainer : null;
+      while (anchor && anchor.parentNode !== ed) anchor = anchor.parentNode;
+      const isHint = anchor && anchor.nodeType === 1 && /^Toque em Foto/.test(anchor.textContent.trim());
+      if (anchor && anchor.nodeType === 1 && ((!anchor.textContent.trim() && !anchor.querySelector('figure,hr')) || isHint)) anchor.replaceWith(grid);
+      else if (anchor) anchor.after(grid);
+      else ed.appendChild(grid);
+      if (!grid.nextElementSibling) grid.after(Object.assign(document.createElement('p'), { innerHTML: '<br>' }));
+    }
+    const uid = await currentUid();
+    for (const f of files) {
+      const fig = document.createElement('figure');
+      fig.className = 'photo uploading'; fig.dataset.fit = 'cover';
+      fig.innerHTML = '<div class="ph-frame"><div class="ph-wait">Enviando foto…</div></div><figcaption></figcaption>';
+      grid.appendChild(fig);
+      try {
+        const blob = await resizeToJpeg(f, 1600, 0.82);
+        const path = `${uid}/${note.id}/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+        const { error } = await sb.storage.from('fotos-notas').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+        if (error) throw error;
+        PHOTO_URLS.set(path, URL.createObjectURL(blob));
+        fig.dataset.path = path;
+        fig.classList.remove('uploading');
+        fig.innerHTML = '<div class="ph-frame"><img alt="" /></div><figcaption></figcaption>';
+      } catch (err) { fig.remove(); toastErr(err); }
+    }
+    preparePhotoGrids(ed, () => touch());
     updateEmpty();
     touch();
   };

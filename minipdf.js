@@ -36,7 +36,9 @@ function textW(s, f, size) { let w = 0; for (let i = 0; i < s.length; i++) w += 
 const esc = (s) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)').replace(/\r/g, '');
 const hex = (h) => { const n = parseInt(h.replace('#', ''), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map((x) => x.toFixed(3)).join(' '); };
 
-export function buildNotePdf({ company = '', author = '', date = '', title = '', html = '', footer = '' }) {
+export function buildNotePdf({ company = '', author = '', date = '', title = '', html = '', footer = '', images = {} }) {
+  const imgList = [];   // fotos usadas: {name, bytes, w, h}
+  const imgName = (path) => { const im = images[path]; if (!im) return null; let e = imgList.find((x) => x.path === path); if (!e) { e = { ...im, path, name: `Im${imgList.length + 1}` }; imgList.push(e); } return e; };
   const PW = 595.28, PH = 841.89, ML = 56, MR = 56, MT = 56, MB = 64;
   const maxW = PW - ML - MR;
   const pages = [];
@@ -156,6 +158,41 @@ export function buildNotePdf({ company = '', author = '', date = '', title = '',
       y -= 6;
       return;
     }
+    if (tag === 'DIV' && el.classList.contains('photo-grid')) {
+      const figs = [...el.querySelectorAll('figure.photo')];
+      const cols = Math.min(3, Math.max(1, Number(el.dataset.cols) || 2));
+      const gap = 10;
+      const cw = (width - gap * (cols - 1)) / cols;
+      const ch = cols === 1 ? cw * 0.62 : cw * 0.75;     // quadro de medida fixa (4:3; 1 por linha um pouco mais baixo)
+      y -= 6;
+      for (let i = 0; i < figs.length; i += cols) {
+        const row = figs.slice(i, i + cols);
+        const caps = row.map((f) => wrap([{ text: (f.querySelector('figcaption')?.textContent || '').trim(), f: 'R', color: '#4b5563' }], cw, 9));
+        const capH = Math.max(...caps.map((c) => (c.length === 1 && !c[0].length ? 0 : c.length * 12)));
+        ensure(ch + capH + 14);
+        const top = y;
+        row.forEach((f, k) => {
+          const x0 = x + k * (cw + gap), y0 = top - ch;
+          const im = imgName(f.dataset.path);
+          rect(x0, y0, cw, ch, null, '#f3f4f6');
+          if (im) {
+            const cover = f.dataset.fit !== 'contain';
+            const sc = cover ? Math.max(cw / im.w, ch / im.h) : Math.min(cw / im.w, ch / im.h);
+            const dw = im.w * sc, dh = im.h * sc;
+            const dx = x0 + (cw - dw) / 2, dy = y0 + (ch - dh) / 2;
+            ops.push(`q ${x0.toFixed(2)} ${y0.toFixed(2)} ${cw.toFixed(2)} ${ch.toFixed(2)} re W n ${dw.toFixed(2)} 0 0 ${dh.toFixed(2)} ${dx.toFixed(2)} ${dy.toFixed(2)} cm /${im.name} Do Q`);
+          } else {
+            text(x0 + 8, y0 + ch / 2, 'Foto indisponível', 'I', 9, '#9ca3af');
+          }
+          rect(x0, y0, cw, ch, '#d1d5db');
+          // legenda
+          let cy = y0 - 3;
+          for (const ln of caps[k]) { cy -= 12; let cx = x0; for (const seg of ln) { if (!seg.space) text(cx, cy + 2, seg.s, seg.f, 9, seg.color); cx += seg.w; } }
+        });
+        y = top - ch - capH - 14;
+      }
+      return;
+    }
     if (tag === 'HR') { ensure(14); y -= 8; line(x, y, x + width, y); y -= 6; return; }
     // parágrafo / div / texto solto
     const runs = trimRuns(runsOf(el, { b: false, i: false }, '#1f2937'));
@@ -199,11 +236,17 @@ export function buildNotePdf({ company = '', author = '', date = '', title = '',
   const fonts = ['Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique', 'Courier']
     .map((n) => add(`<< /Type /Font /Subtype /Type1 /BaseFont /${n} /Encoding /WinAnsiEncoding >>`));
   const fontRes = fonts.map((id, i) => `/F${i + 1} ${id} 0 R`).join(' ');
+  const imgIds = imgList.map((im) => {
+    let bin = '';
+    for (let i = 0; i < im.bytes.length; i += 8192) bin += String.fromCharCode.apply(null, im.bytes.subarray(i, i + 8192));
+    return add(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bytes.length} >>\nstream\n${bin}\nendstream`);
+  });
+  const xobj = imgList.length ? ` /XObject << ${imgList.map((im, i) => `/${im.name} ${imgIds[i]} 0 R`).join(' ')} >>` : '';
   const kids = [];
   for (const p of pages) {
     const content = p.join('\n');
     const cid = add(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-    kids.push(add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /Font << ${fontRes} >> >> /Contents ${cid} 0 R >>`));
+    kids.push(add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /Font << ${fontRes} >>${xobj} >> /Contents ${cid} 0 R >>`));
   }
   objs[catalog - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
   objs[pagesId - 1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(' ')}] /Count ${kids.length} >>`;

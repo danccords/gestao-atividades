@@ -1043,3 +1043,26 @@ button.cmt-count:hover { background: var(--primary-soft); border-color: var(--bo
 .pc-tx p { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; color: var(--text); }
 .pc-form { display: flex; gap: 6px; align-items: flex-end; padding: 8px 0 6px; border-top: 1px solid var(--border); }
 .pc-form .textarea { flex: 1; min-height: 40px; font-size: 13px; }
+
+/* Fotos nas anotações: quadros de medida fixa */
+.tb-photo { display: inline-flex; align-items: center; gap: 5px; width: auto !important; padding: 0 10px !important; font-weight: 600; color: var(--primary) !important; }
+.tb-photo svg { width: 16px; height: 16px; }
+.editor .photo-grid { --cols: 2; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 12px; margin: 12px 0; padding: 30px 10px 10px; border: 1px dashed var(--border-strong); border-radius: 10px; position: relative; user-select: none; }
+.editor .photo-grid[data-cols="1"] { --cols: 1; }
+.editor .photo-grid[data-cols="3"] { --cols: 3; }
+.editor .pg-tools { position: absolute; top: 4px; left: 10px; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-3); }
+.editor .pg-tools button { width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12px; cursor: pointer; padding: 0; }
+.editor .pg-tools button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.editor figure.photo { margin: 0; min-width: 0; }
+.editor .ph-frame { position: relative; aspect-ratio: 4 / 3; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.editor .photo-grid[data-cols="1"] .ph-frame { aspect-ratio: 16 / 10; }
+.editor .ph-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.editor figure.photo[data-fit="contain"] .ph-frame img { object-fit: contain; }
+.editor .ph-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: var(--text-3); }
+.editor figcaption { font-size: 12.5px; color: var(--text-2); text-align: center; padding: 5px 2px 0; outline: none; min-height: 1.2em; user-select: text; }
+.editor figcaption:focus { background: var(--primary-soft); border-radius: 4px; }
+.editor .ph-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
+.editor .ph-btns button { width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .55); color: #fff; font-size: 14px; cursor: pointer; padding: 0; }
+.editor .ph-btns button:hover { background: rgba(0, 0, 0, .8); }
+@media (max-width: 860px) { .editor .photo-grid[data-cols="3"] { --cols: 2; } }
+.editor figcaption:empty::before { content: "Toque para escrever uma legenda"; color: var(--text-3); font-style: italic; }

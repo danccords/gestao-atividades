@@ -187,3 +187,10 @@ Mudou a %, o status acompanha; escolheu um status, a % vai para a faixa dele. Co
 - A barra de progresso não é arrastável: ela acompanha o status (Não iniciado 0%, Iniciando 10%, Em andamento 50%, Finalizando 85%, Concluída 100%) ou as subatividades.
 - **Concluir pede confirmação.** Depois de concluída, a atividade fica **travada** para o colaborador (status, subatividades, atualizações, pedido de prazo); só um administrador pode reabrir — o banco também bloqueia (atualização 14).
 - **Backup** (da equipe e das anotações) só aparece para administradores.
+
+## Fotos nas anotações (atualização 15)
+- Botão **Foto** na barra do editor: escolha uma ou várias fotos (no celular, câmera ou galeria). Elas são reduzidas (máx. 1600 px) e guardadas numa pasta **privada** do Supabase Storage (`fotos-notas/<usuário>/<anotação>/`), que só o dono vê.
+- As fotos ficam em **quadros de tamanho fixo** (4:3), 1, 2 ou 3 por linha, com legenda; ⤢ alterna entre preencher o quadro (corta as bordas) e mostrar a foto inteira; ✕ remove.
+- O PDF coloca as fotos nos mesmos quadros, várias por página.
+- Modelo novo: **Relatório de visita ao fornecedor**.
+- O backup das anotações guarda os textos; as fotos ficam no Storage.
