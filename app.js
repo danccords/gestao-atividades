@@ -3259,37 +3259,28 @@ function chooseNoteTemplate() {
     try { await newNoteFrom(t ? { title: t.title(), html: t.html(), icon: t.icon } : null); } catch (e) { toastErr(e); }
   }));
 }
-// Exporta a página como PDF (abre a janela de impressão: escolha "Salvar como PDF")
-function exportNotePdf(note, html) {
-  const fr = document.createElement('iframe');
-  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
-  document.body.appendChild(fr);
-  const d = fr.contentDocument;
-  d.open();
-  d.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(note.title || 'Anotação')}</title>
-<style>
-  @page { size: A4; margin: 18mm 16mm; }
-  body { font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: #1f2937; font-size: 11.5pt; line-height: 1.5; }
-  .hd { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1d4ed8; padding-bottom: 8px; margin-bottom: 16px; }
-  .hd .co { font-weight: 700; color: #1d4ed8; font-size: 12pt; } .hd .dt { font-size: 9.5pt; color: #6b7280; text-align: right; }
-  h1.t { font-size: 18pt; margin: 0 0 12px; }
-  h1 { font-size: 16pt; } h2 { font-size: 13pt; margin: 16px 0 6px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 3px; } h3 { font-size: 12pt; }
-  p { margin: 4px 0; } ul, ol { margin: 4px 0; padding-left: 22px; } li { margin: 2px 0; }
-  ul.checklist { list-style: none; padding-left: 4px; } ul.checklist li::before { content: '☐  '; } ul.checklist li[data-checked="true"]::before { content: '☑  '; }
-  blockquote { border-left: 3px solid #d1d5db; margin: 6px 0; padding-left: 10px; color: #4b5563; }
-  pre { background: #f3f4f6; padding: 8px; border-radius: 4px; white-space: pre-wrap; }
-  .ft { margin-top: 28px; font-size: 9pt; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 6px; }
-</style></head><body>
-<div class="hd"><div class="co">${esc(COMPANY_NAME)}</div><div class="dt">${esc(S.me?.name || '')}<br>${new Date().toLocaleDateString('pt-BR')}</div></div>
-<h1 class="t">${esc(note.title || 'Sem título')}</h1>
-${sanitize(html)}
-<div class="ft">Gerado pelo ${esc(APP_NAME)}</div>
-</body></html>`);
-  d.close();
-  setTimeout(() => {
-    try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { toastErr(e); }
-    setTimeout(() => fr.remove(), 60000);
-  }, 300);
+// Exporta a página como arquivo PDF (gerado no próprio app: funciona no celular e no computador)
+async function exportNotePdf(note, html) {
+  try {
+    const { buildNotePdf } = await import('./minipdf.js');
+    const title = note.title || 'Anotação';
+    const bytes = buildNotePdf({
+      company: COMPANY_NAME, author: S.me?.name || '', date: new Date().toLocaleDateString('pt-BR'),
+      title, html: sanitize(html), footer: `Gerado pelo ${APP_NAME}`,
+    });
+    const name = title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\- ]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'anotacao';
+    const file = new File([bytes], `${name}.pdf`, { type: 'application/pdf' });
+    const mobile = matchMedia('(max-width: 860px)').matches || /Android|iPhone|iPad/i.test(navigator.userAgent);
+    if (mobile && navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file], title }); return; } catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url; a.download = file.name; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast('PDF gerado', 'ok');
+  } catch (e) { toastErr(e); }
 }
 
 async function viewNotes(noteId) {
@@ -3357,7 +3348,7 @@ function mountEditor(note, renderList) {
       <div class="editor-top">
         <span id="n-saved">Editado ${relTime(note.updated_at)}</span>
         <span class="spacer"></span>
-        <button class="btn btn-ghost btn-sm" id="n-pdf" title="Exportar esta página em PDF">${ic('download').replace('<svg', '<svg width="15" height="15"')} PDF</button>
+        <button class="btn btn-ghost btn-sm" id="n-pdf" title="Baixar esta página em PDF">${ic('download').replace('<svg', '<svg width="15" height="15"')} PDF</button>
         <button class="btn btn-ghost btn-sm" id="n-pin">${note.pinned ? '📌 Desafixar' : '📌 Fixar'}</button>
         <button class="btn btn-ghost btn-sm" id="n-del" style="color:var(--danger)">${ic('trash').replace('<svg', '<svg width="15" height="15"')} Excluir</button>
       </div>

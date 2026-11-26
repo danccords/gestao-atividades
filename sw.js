@@ -1,8 +1,8 @@
 // Service worker: permite instalar o app e abrir mais rápido.
 // Arquivos do app: tenta a rede primeiro (sempre a versão mais nova) e usa cache se estiver offline.
 // Dados do Supabase nunca são guardados em cache.
-const CACHE = 'ga-v30';
-const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './manifest.webmanifest', './icons/icon-192.png'];
+const CACHE = 'ga-v31';
+const SHELL = ['./', './index.html', './styles.css', './app.js', './minipdf.js', './config.js', './manifest.webmanifest', './icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
