@@ -1530,14 +1530,35 @@ function popStatus(anchor, t) {
   { width: 230 });
   el.anchor = anchor;
 }
-// Comentários num balão abaixo do ícone (sem abrir o painel)
-async function popComments(anchor, t) {
+// Separa uma atualização em "Feito", "Falta" e o resto (status, comentários livres)
+function parseUpd(body) {
+  const out = { feito: [], falta: [], outro: [] };
+  let cur = 'outro';
+  for (const raw of String(body || '').split('\n')) {
+    let line = raw;
+    const mF = line.match(/^\s*(?:✅\s*)?feito\s*:\s*/i), mT = line.match(/^\s*(?:⏳\s*)?falta\s*:\s*/i);
+    if (mF) { cur = 'feito'; line = line.slice(mF[0].length); }
+    else if (mT) { cur = 'falta'; line = line.slice(mT[0].length); }
+    else if (/^\s*(📊|🏁)/.test(line)) cur = 'outro';
+    if (line.trim()) out[cur].push(line.trim());
+  }
+  return { feito: out.feito.join('\n'), falta: out.falta.join('\n'), outro: out.outro.join('\n') };
+}
+
+// Atualizações num balão abaixo do botão (sem abrir o painel), separadas em Feito / Falta / Todas
+async function popComments(anchor, t, startTab = 'feito') {
   const el = openPopover(anchor, `<div class="pc-head"><b>${esc(t.title)}</b><span class="muted small">Atualizações e comentários</span></div>
+    <div class="pc-tabs" role="tablist">
+      <button type="button" class="pc-tab feito" data-tab="feito">${ic('check')}Feito <span class="n">·</span></button>
+      <button type="button" class="pc-tab falta" data-tab="falta">${ic('clock')}Falta <span class="n">·</span></button>
+      <button type="button" class="pc-tab todas" data-tab="todas">Todas</button>
+    </div>
     <div class="pc-list"><div class="muted small" style="padding:10px">Carregando…</div></div>
     ${canEditTask(t) ? `<div class="pc-form"><textarea class="textarea" rows="2" placeholder="Escrever um comentário…" id="pc-body"></textarea><button class="btn btn-sm btn-primary" id="pc-send">Enviar</button></div>` : ''}
     <button class="btn btn-sm btn-ghost btn-block" id="pc-open">Abrir atividade</button>`,
   (root) => {
     $('#pc-open', root).onclick = () => { closePopover(); openTask(t.id); };
+    $$('.pc-tab', root).forEach((b) => (b.onclick = () => { tab = b.dataset.tab; render(); }));
     const send = $('#pc-send', root);
     if (send) send.onclick = async () => {
       const body = $('#pc-body', root).value.trim();
@@ -1547,26 +1568,62 @@ async function popComments(anchor, t) {
         await q(sb.from('task_comments').insert({ task_id: t.id, body, author_email: S.me.email }));
         $('#pc-body', root).value = '';
         await reloadLastUpdates();
+        tab = 'todas';
         await load();
         refresh();
       } catch (e) { toastErr(e); }
       send.disabled = false;
     };
-  }, { width: 340 });
+  }, { width: 360 });
   el.anchor = anchor;
+  let tab = startTab, rows = [], top0 = null;
+  const who = (email) => memberByEmail(email) || { name: email, email };
+  const item = (c, text, cls = '') => {
+    const m = who(c.author_email);
+    return `<div class="pc-item ${cls}">${avatar(m)}
+      <div class="pc-tx"><div><b>${esc(m.name)}</b> <span class="muted small">${relTime(c.created_at)}</span></div><p>${esc(text)}</p></div></div>`;
+  };
+  const render = () => {
+    const list = $('.pc-list', el);
+    if (!list) return;
+    const subs = subsOf(t.id);
+    const subDone = subs.filter((x) => x.done), subTodo = subs.filter((x) => !x.done);
+    const parsed = rows.map((c) => ({ c, p: parseUpd(c.body) }));
+    const feitos = parsed.filter((x) => x.p.feito);
+    const ultFalta = parsed.find((x) => x.p.falta);   // a mais recente que diz o que falta
+    const nFeito = subDone.length + feitos.length;
+    const nFalta = t.status === 'concluido' ? 0 : subTodo.length + (ultFalta ? 1 : 0);
+    $('.pc-tab.feito .n', el).textContent = nFeito;
+    $('.pc-tab.falta .n', el).textContent = nFalta;
+    $$('.pc-tab', el).forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+    const subList = (arr, done) => arr.length ? `<div class="pc-sec">Subatividades</div><ul class="pc-subs ${done ? 'done' : ''}">${arr.map((x) => `<li>${esc(x.title)}</li>`).join('')}</ul>` : '';
+    let html = '';
+    if (tab === 'feito') {
+      html = subList(subDone, true)
+        + (feitos.length ? `${subDone.length ? '<div class="pc-sec">Atualizações</div>' : ''}${feitos.map((x) => item(x.c, x.p.feito, 'feito')).join('')}` : '');
+      if (!html) html = '<div class="pc-empty">Ainda não há nada marcado como feito.</div>';
+    } else if (tab === 'falta') {
+      if (t.status === 'concluido') html = '<div class="pc-empty">Atividade concluída: não falta nada. ✅</div>';
+      else {
+        html = subList(subTodo, false)
+          + (ultFalta ? `${subTodo.length ? '<div class="pc-sec">Última atualização</div>' : ''}${item(ultFalta.c, ultFalta.p.falta, 'falta')}` : '');
+        if (!html) html = '<div class="pc-empty">Ninguém informou o que falta ainda.</div>';
+      }
+    } else {
+      html = rows.length ? rows.map((c) => item(c, c.body)).join('') : '<div class="pc-empty">Nenhum comentário.</div>';
+    }
+    list.innerHTML = html;
+    // reposiciona se o balão passou da parte de baixo da tela
+    if (top0 == null) top0 = el.style.top; else el.style.top = top0;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > innerHeight - 8) { const ar = anchor.getBoundingClientRect(); el.style.top = Math.max(8, Math.min(ar.top - r.height - 6, innerHeight - r.height - 8)) + 'px'; }
+  };
   const load = async () => {
     const list = $('.pc-list', el);
     if (!list) return;
     try {
-      const rows = await q(sb.from('task_comments').select('*').eq('task_id', t.id).order('created_at', { ascending: false }).limit(30));
-      list.innerHTML = rows.length ? rows.map((c) => {
-        const m = memberByEmail(c.author_email);
-        return `<div class="pc-item">${avatar(m || { name: c.author_email, email: c.author_email })}
-          <div class="pc-tx"><div><b>${esc(m?.name || c.author_email)}</b> <span class="muted small">${relTime(c.created_at)}</span></div><p>${esc(c.body)}</p></div></div>`;
-      }).join('') : '<div class="muted small" style="padding:10px">Nenhum comentário.</div>';
-      // reposiciona se o balão passou da parte de baixo da tela
-      const r = el.getBoundingClientRect();
-      if (r.bottom > innerHeight - 8) { const ar = anchor.getBoundingClientRect(); el.style.top = Math.max(8, Math.min(ar.top - r.height - 6, innerHeight - r.height - 8)) + 'px'; }
+      rows = await q(sb.from('task_comments').select('*').eq('task_id', t.id).order('created_at', { ascending: false }).limit(60));
+      render();
     } catch (e) { list.innerHTML = `<div class="err" style="padding:10px">${esc(e.message || 'Erro ao carregar')}</div>`; }
   };
   load();

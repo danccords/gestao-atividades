@@ -1099,3 +1099,28 @@ html[data-theme="dark"] .upd-btn:hover { background: #2c3766; }
 .pc-prog b { font-size: 13px; color: var(--text-1, var(--text)); min-width: 36px; text-align: right; }
 html[data-theme="dark"] .pc-prog .bar { background: #3a3d60; }
 .pause-ic { width: 9px; height: 9px; fill: currentColor; flex: none; }
+/* abas Feito / Falta / Todas no balão de atualizações */
+.pc-tabs { display: flex; gap: 6px; padding: 8px 0 6px; }
+.pc-tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface, #fff); color: var(--text-2); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.pc-tab svg { width: 14px; height: 14px; }
+.pc-tab .n { font-size: 11px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--bg-2, #eef0f5); display: inline-flex; align-items: center; justify-content: center; }
+.pc-tab.todas { flex: 0 0 auto; padding: 0 12px; }
+.pc-tab.feito.on { background: #e6f9f0; border-color: #9fe2c3; color: #0a7a4b; }
+.pc-tab.feito.on .n { background: #00a862; color: #fff; }
+.pc-tab.falta.on { background: #fff4e5; border-color: #f7cf94; color: #a35c00; }
+.pc-tab.falta.on .n { background: #e08a00; color: #fff; }
+.pc-tab.todas.on { background: var(--primary-soft); border-color: #c9d8ff; color: var(--primary); }
+.pc-sec { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: 8px 4px 2px; }
+.pc-subs { list-style: none; margin: 0; padding: 2px 4px 6px; font-size: 13px; }
+.pc-subs li { position: relative; padding: 4px 0 4px 22px; line-height: 1.35; }
+.pc-subs li::before { content: ''; position: absolute; left: 2px; top: 6px; width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid #c3c7d1; }
+.pc-subs.done li { color: var(--text-2); }
+.pc-subs.done li::before { background: #00a862; border-color: #00a862; }
+.pc-subs.done li::after { content: ''; position: absolute; left: 6px; top: 7px; width: 3px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.pc-item.feito { border-left: 3px solid #00c875; padding-left: 8px; }
+.pc-item.falta { border-left: 3px solid #fdab3d; padding-left: 8px; }
+.pc-empty { padding: 14px 6px; font-size: 13px; color: var(--text-3); text-align: center; }
+html[data-theme="dark"] .pc-tab { background: transparent; }
+html[data-theme="dark"] .pc-tab.feito.on { background: #12392b; border-color: #1f6b4a; color: #5fe0a5; }
+html[data-theme="dark"] .pc-tab.falta.on { background: #3d2c10; border-color: #7a5514; color: #ffbf5c; }
+html[data-theme="dark"] .pc-tab.todas.on { background: #26305c; border-color: #3b4a85; color: #9db5ff; }
