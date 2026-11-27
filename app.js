@@ -1530,6 +1530,24 @@ function popStatus(anchor, t) {
   { width: 230 });
   el.anchor = anchor;
 }
+// Caixa em destaque com as solicitações que esperam aprovação (não se mistura com as atividades)
+function renderApprovalBox(list) {
+  if (!list.length) return '';
+  const adm = isAdmin(), n = list.length;
+  return `<section class="appr-box ${adm ? 'adm' : ''}">
+    <div class="appr-head">${ic('clock')}<div><b>${adm ? `${n} solicitaç${n > 1 ? 'ões' : 'ão'} esperando a sua aprovação` : `Sua${n > 1 ? 's' : ''} solicitaç${n > 1 ? 'ões' : 'ão'} esperando aprovação`}</b>
+      <span>${adm ? 'Abra cada uma, defina o prazo e a prioridade e clique em Aprovar.' : 'O gestor vai aprovar e definir o prazo. Enquanto isso, ela não entra na lista de atividades.'}</span></div></div>
+    ${list.map((t) => {
+      const who = memberByEmail(t.requested_by_email) || member(t.assignee_id);
+      return `<div class="appr-item" data-id="${t.id}">
+        <div class="appr-tx" data-act="open"><b>${esc(t.title)}</b>
+          <span>${adm ? `Pedido por <b>${esc(who?.name || t.requested_by_email || '—')}</b> · ` : ''}enviado ${relTime(t.created_at)}${t.suggested_due_date ? ` · entrega: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}</span></div>
+        <button type="button" class="btn ${adm ? 'btn-primary' : ''} btn-sm" data-act="open">${adm ? `${ic('ok')} Revisar e aprovar` : 'Ver pedido'}</button>
+      </div>`;
+    }).join('')}
+  </section>`;
+}
+
 // Separa uma atualização em "Feito", "Falta" e o resto (status, comentários livres)
 function parseUpd(body) {
   const out = { feito: [], falta: [], outro: [] };
@@ -2215,8 +2233,8 @@ function viewProject(id, isRefresh) {
   const textMatch = (t) => !ui.q || t.title.toLowerCase().includes(ui.q.toLowerCase()) || (t.description || '').toLowerCase().includes(ui.q.toLowerCase());
   const pendingTs = allTs.filter((t) => approvalOf(t) === 'pendente' && textMatch(t)).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const refusedTs = allTs.filter((t) => approvalOf(t) === 'recusada' && textMatch(t));
+  const approvalBox = renderApprovalBox(pendingTs);
   const reqGroups = [
-    { key: '_pend', label: isAdmin() ? 'Solicitações aguardando sua aprovação' : 'Suas solicitações aguardando aprovação', color: '#f59e0b', tasks: pendingTs },
     { key: '_rec', label: 'Solicitações recusadas', color: '#e2445c', tasks: refusedTs, collapsed: true },
   ].filter((g) => g.tasks.length);
   const canRequest = !p.archived;
@@ -2231,11 +2249,11 @@ function viewProject(id, isRefresh) {
   const avg = weightedProgress(allTs.filter(isApproved));
 
   let body = '';
-  if (!total && !reqGroups.length) {
+  if (!total && !reqGroups.length && !pendingTs.length) {
     body = `<div class="empty"><b>Nenhuma atividade neste projeto</b>${isAdmin() ? 'Crie a primeira atividade e defina o responsável e o prazo.' : 'Você pode solicitar uma atividade: o administrador aprova e define o prazo.'}
       ${canRequest ? `<br/><button class="btn btn-primary" id="first-task">${ic('plus')} ${isAdmin() ? 'Nova atividade' : 'Solicitar atividade'}</button>` : ''}</div>`;
   } else if (mode === 'kanban') {
-    body = (reqGroups.length ? renderGroups(reqGroups, { scope: id }) : '') + `<div class="kanban">${STATUS_ORDER.map((k) => {
+    body = approvalBox + (reqGroups.length ? renderGroups(reqGroups, { scope: id }) : '') + `<div class="kanban">${STATUS_ORDER.map((k) => {
       const list = ts.filter((t) => t.status === k);
       return `<div class="kcol" data-col="${k}">
         <div class="kcol-head"><i style="background:${STATUS[k].color}"></i>${STATUS[k].label}<span class="n">${list.length}</span></div>
@@ -2264,7 +2282,7 @@ function viewProject(id, isRefresh) {
       groups = STATUS_ORDER.map((k) => ({ key: k, label: STATUS[k].label, color: STATUS[k].color, tasks: ts.filter((t) => t.status === k), defaults: { status: k }, collapsed: k === 'concluido' }))
         .filter((g) => g.tasks.length || (g.key === 'nao_iniciado' && !ui.q && !ui.who && !ui.st));
     }
-    body = (reqGroups.length ? renderGroups(reqGroups, { scope: id }) : '')
+    body = approvalBox + (reqGroups.length ? renderGroups(reqGroups, { scope: id }) : '')
       + (groups.length ? renderGroups(groups, { allowAdd: true, scope: id }) : (total ? `<div class="empty"><b>Nada encontrado</b>Nenhuma atividade corresponde aos filtros.</div>` : ''));
   }
 
@@ -2283,9 +2301,9 @@ function viewProject(id, isRefresh) {
         <button class="btn" id="edit-proj">${ic('edit')} Editar</button>
         <button class="btn btn-icon" id="more-proj" data-pop-anchor title="Mais">${ic('more')}</button>
         ${canRequest ? `<button class="btn btn-primary" id="new-task">${ic('plus')} Nova atividade</button>` : ''}
-      </div>` : (canRequest && (total || reqGroups.length) ? `<div class="actions"><button class="btn btn-primary" id="new-task">${ic('plus')} Solicitar atividade</button></div>` : '')}
+      </div>` : (canRequest && (total || reqGroups.length || pendingTs.length) ? `<div class="actions"><button class="btn btn-primary" id="new-task">${ic('plus')} Solicitar atividade</button></div>` : '')}
     </div>
-    ${total || reqGroups.length ? `<div class="toolbar">
+    ${total || reqGroups.length || pendingTs.length ? `<div class="toolbar">
       <div class="search">${ic('search')}<input class="input" id="f-q" placeholder="Buscar atividade..." value="${esc(ui.q)}" /></div>
       <select class="select" id="f-who">
         <option value="">Todos os responsáveis</option>

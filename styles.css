@@ -1124,3 +1124,19 @@ html[data-theme="dark"] .pc-tab { background: transparent; }
 html[data-theme="dark"] .pc-tab.feito.on { background: #12392b; border-color: #1f6b4a; color: #5fe0a5; }
 html[data-theme="dark"] .pc-tab.falta.on { background: #3d2c10; border-color: #7a5514; color: #ffbf5c; }
 html[data-theme="dark"] .pc-tab.todas.on { background: #26305c; border-color: #3b4a85; color: #9db5ff; }
+/* caixa de solicitações aguardando aprovação */
+.appr-box { border: 2px solid #f5b544; background: #fff8eb; border-radius: 12px; padding: 14px 16px 10px; margin: 4px 0 22px; box-shadow: 0 2px 10px rgba(245, 158, 11, .12); }
+.appr-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; color: #8a4b00; }
+.appr-head > svg { width: 26px; height: 26px; flex: none; padding: 5px; border-radius: 999px; background: #f59e0b; color: #fff; stroke: #fff; box-sizing: content-box; }
+.appr-head b { display: block; font-size: 16px; }
+.appr-head span { font-size: 13px; color: #9a6a1f; }
+.appr-item { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid #f3d7a4; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.appr-tx { flex: 1; min-width: 0; cursor: pointer; }
+.appr-tx > b { display: block; font-size: 14.5px; overflow-wrap: anywhere; }
+.appr-tx > span { font-size: 12.5px; color: var(--text-2); }
+.appr-item .btn { flex: none; white-space: nowrap; }
+.appr-box:not(.adm) { border-width: 1px; box-shadow: none; }
+@media (max-width: 600px) { .appr-item { flex-direction: column; align-items: stretch; } }
+html[data-theme="dark"] .appr-box { background: #33270f; border-color: #8a6420; }
+html[data-theme="dark"] .appr-head, html[data-theme="dark"] .appr-head span { color: #ffcf7a; }
+html[data-theme="dark"] .appr-item { background: var(--surface); border-color: #6b4f1a; border-left-color: #f59e0b; }
