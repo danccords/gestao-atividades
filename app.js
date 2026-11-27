@@ -1411,7 +1411,7 @@ function updateLine(t) {
   const who = lu ? (memberByEmail(lu.author_email)?.name || lu.author_email) : '';
   const dueReq = S.dueRequests.find((r) => r.task_id === t.id && r.status === 'pendente');
   const badges = [
-    t.hold ? `<span class="hold-badge" title="${esc(t.hold_note || '')}">⏸ ${esc(HOLDS[t.hold] || t.hold)}</span>` : '',
+    t.hold ? `<span class="hold-badge" title="${esc(t.hold_note || '')}"><svg class="pause-ic" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1" width="2.4" height="8" rx=".8"/><rect x="6.1" y="1" width="2.4" height="8" rx=".8"/></svg>${esc(HOLDS[t.hold] || t.hold)}</span>` : '',
     dueReq ? `<span class="dec-badge">📅 Novo prazo pedido</span>` : '',
   ].join('');
   const staleTxt = stale ? (lu ? `sem atualização há ${days <= 1 ? '1 dia' : days + ' dias'}` : 'sem atualização') : '';
