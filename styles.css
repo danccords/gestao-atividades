@@ -1083,7 +1083,7 @@ button.cmt-count:hover { background: var(--primary-soft); border-color: var(--bo
 .editor .doc-logos { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 6px 0 12px; margin-bottom: 12px; border-bottom: 2px solid #1d4ed8; user-select: none; }
 .editor .doc-logos img { max-width: 42%; object-fit: contain; background: #fff; border-radius: 4px; }
 /* botão "Atualizações" e balões da linha da atividade: mesma altura, fonte e alinhamento */
-.task-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
+.task-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; margin-bottom: 6px; }
 .task-badges > * { box-sizing: border-box; display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .upd-btn { border: 1px solid #c9d8ff; background: var(--primary-soft); color: var(--primary); font-family: inherit; cursor: pointer; }
 .upd-btn svg { width: 13px; height: 13px; stroke: currentColor; flex: none; }
