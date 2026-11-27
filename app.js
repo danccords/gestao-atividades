@@ -1530,19 +1530,32 @@ function popStatus(anchor, t) {
   { width: 230 });
   el.anchor = anchor;
 }
-// Caixa em destaque com as solicitações que esperam aprovação (não se mistura com as atividades)
-function renderApprovalBox(list) {
-  if (!list.length) return '';
-  const adm = isAdmin(), n = list.length;
-  return `<section class="appr-box ${adm ? 'adm' : ''}">
-    <div class="appr-head">${ic('clock')}<div><b>${adm ? `${n} solicitaç${n > 1 ? 'ões' : 'ão'} esperando a sua aprovação` : `Sua${n > 1 ? 's' : ''} solicitaç${n > 1 ? 'ões' : 'ão'} esperando aprovação`}</b>
-      <span>${adm ? 'Abra cada uma, defina o prazo e a prioridade e clique em Aprovar.' : 'O gestor vai aprovar e definir o prazo. Enquanto isso, ela não entra na lista de atividades.'}</span></div></div>
-    ${list.map((t) => {
+// Caixa em destaque com o que espera aprovação (não se mistura com as atividades).
+// items: [{ t, kind: 'aprovar' | 'prazo' | 'meu', label? }]
+function renderApprovalBox(items, { showProject = false, mine = !isAdmin() } = {}) {
+  if (!items.length) return '';
+  const n = items.length, s2 = n > 1;
+  const onlyReq = items.every((x) => x.kind === 'aprovar');
+  const title = mine
+    ? `Sua${s2 ? 's' : ''} solicitaç${s2 ? 'ões' : 'ão'} esperando aprovação`
+    : onlyReq ? `${n} solicitaç${s2 ? 'ões' : 'ão'} esperando a sua aprovação` : `${n} ${s2 ? 'decisões esperando' : 'decisão esperando'} por você`;
+  const sub = mine
+    ? 'O gestor vai aprovar e definir o prazo. Enquanto isso, ela não entra na lista de atividades.'
+    : 'Abra cada uma, confira e clique em Aprovar (ou Recusar).';
+  return `<section class="appr-box ${mine ? '' : 'adm'}">
+    <div class="appr-head">${ic('clock')}<div><b>${title}</b><span>${sub}</span></div></div>
+    ${items.map(({ t, kind, label }) => {
       const who = memberByEmail(t.requested_by_email) || member(t.assignee_id);
+      const p = showProject ? S.projects.find((x) => x.id === t.project_id) : null;
+      const info = kind === 'prazo'
+        ? `<span class="appr-kind">Pedido de novo prazo</span> ${esc(label || '')} · ${esc(member(t.assignee_id)?.name || '')}`
+        : `${kind === 'aprovar' ? `<span class="appr-kind">Nova solicitação</span> Pedido por <b>${esc(who?.name || t.requested_by_email || '—')}</b> · ` : ''}enviado ${relTime(t.created_at)}${t.suggested_due_date ? ` · entrega: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}`;
+      const btn = kind === 'meu' ? 'Ver pedido' : kind === 'prazo' ? `${ic('ok')} Ver e decidir` : `${ic('ok')} Revisar e aprovar`;
       return `<div class="appr-item" data-id="${t.id}">
         <div class="appr-tx" data-act="open"><b>${esc(t.title)}</b>
-          <span>${adm ? `Pedido por <b>${esc(who?.name || t.requested_by_email || '—')}</b> · ` : ''}enviado ${relTime(t.created_at)}${t.suggested_due_date ? ` · entrega: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}</span></div>
-        <button type="button" class="btn ${adm ? 'btn-primary' : ''} btn-sm" data-act="open">${adm ? `${ic('ok')} Revisar e aprovar` : 'Ver pedido'}</button>
+          ${p ? `<span class="appr-proj"><i style="background:${esc(p.color)}"></i>${esc(p.name)}</span>` : ''}
+          <span>${info}</span></div>
+        <button type="button" class="btn ${kind === 'meu' ? '' : 'btn-primary'} btn-sm" data-act="open">${btn}</button>
       </div>`;
     }).join('')}
   </section>`;
@@ -2233,7 +2246,7 @@ function viewProject(id, isRefresh) {
   const textMatch = (t) => !ui.q || t.title.toLowerCase().includes(ui.q.toLowerCase()) || (t.description || '').toLowerCase().includes(ui.q.toLowerCase());
   const pendingTs = allTs.filter((t) => approvalOf(t) === 'pendente' && textMatch(t)).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const refusedTs = allTs.filter((t) => approvalOf(t) === 'recusada' && textMatch(t));
-  const approvalBox = renderApprovalBox(pendingTs);
+  const approvalBox = renderApprovalBox(pendingTs.map((t) => ({ t, kind: isAdmin() ? 'aprovar' : 'meu' })));
   const reqGroups = [
     { key: '_rec', label: 'Solicitações recusadas', color: '#e2445c', tasks: refusedTs, collapsed: true },
   ].filter((g) => g.tasks.length);
@@ -3105,10 +3118,11 @@ function viewMine() {
 
   const qMatch = (t) => !ui.q || t.title.toLowerCase().includes(ui.q.toLowerCase());
   const myReqs = S.tasks.filter((t) => !isApproved(t) && t.requested_by_email === S.me.email && activeProject(t) && qMatch(t));
-  const toApprove = ui.who === 'me' || !isAdmin() ? [...new Set(myDecisions().map((d) => d.t))].filter(qMatch) : [];
+  const decisions = ui.who === 'me' || !isAdmin() ? myDecisions().filter((d) => qMatch(d.t)) : [];
+  const myPend = myReqs.filter((t) => approvalOf(t) === 'pendente' && !decisions.some((d) => d.t.id === t.id));
+  const approvalBoxes = renderApprovalBox(decisions, { showProject: true, mine: false })
+    + renderApprovalBox(myPend.map((t) => ({ t, kind: 'meu' })), { showProject: true, mine: true });
   const groups = [
-    { key: 'approve', label: 'Para você decidir (aprovar, novo prazo)', color: '#1d4ed8', tasks: toApprove },
-    { key: 'req', label: 'Minhas solicitações aguardando aprovação', color: '#f59e0b', tasks: myReqs.filter((t) => approvalOf(t) === 'pendente') },
     { key: 'refused', label: 'Minhas solicitações recusadas', color: '#e2445c', tasks: myReqs.filter((t) => approvalOf(t) === 'recusada') },
     { key: 'late', label: 'Atrasadas', color: '#e2445c', tasks: late },
     { key: 'soon', label: `Vencem nos próximos ${DUE_SOON_DAYS} dias`, color: '#f59e0b', tasks: soon },
@@ -3120,6 +3134,7 @@ function viewMine() {
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   $('#view').innerHTML = `
     <div class="page-head"><div class="t"><h1>Minhas atividades</h1><p>Tudo o que está sob responsabilidade ${ui.who === 'me' || !isAdmin() ? 'sua' : 'do filtro selecionado'}, ordenado pelo prazo.</p></div></div>
+    ${approvalBoxes}
     ${late.length ? `<div class="alert danger">${ic('alert')}<div><b>${who === 'Você' ? 'Você tem' : who + ' tem'} ${late.length} atividade${late.length > 1 ? 's' : ''} atrasada${late.length > 1 ? 's' : ''}</b>Atualize o status ou fale com o gestor sobre um novo prazo.</div></div>` : ''}
     ${soon.length ? `<div class="alert warn">${ic('clock')}<div><b>${soon.length} atividade${soon.length > 1 ? 's vencem' : ' vence'} nos próximos ${DUE_SOON_DAYS} dias</b>${soon.slice(0, 3).map((t) => esc(t.title) + ' (' + esc(dueText(t).toLowerCase()) + ')').join(' · ')}</div></div>` : ''}
     ${!late.length && !soon.length && base.length ? `<div class="alert ok">${ic('ok')}<div><b>Tudo em dia!</b>Nenhuma atividade atrasada ou vencendo nos próximos dias.</div></div>` : ''}
@@ -3132,7 +3147,7 @@ function viewMine() {
         ${S.members.filter((m) => m.active && m.id !== S.me.id).map((m) => `<option value="${m.id}" ${ui.who === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
       </select>` : ''}
     </div>
-    ${groups.length ? renderGroups(groups, { showProject: true, scope: 'mine' }) : `<div class="empty"><b>Nenhuma atividade</b>Quando o gestor atribuir uma atividade a você, ela aparece aqui.</div>`}`;
+    ${groups.length ? renderGroups(groups, { showProject: true, scope: 'mine' }) : approvalBoxes ? '' : `<div class="empty"><b>Nenhuma atividade</b>Quando o gestor atribuir uma atividade a você, ela aparece aqui.</div>`}`;
 
   const qi = $('#m-q');
   qi.oninput = () => { ui.q = qi.value; clearTimeout(qi._t); qi._t = setTimeout(() => { viewMine(); const n = $('#m-q'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
