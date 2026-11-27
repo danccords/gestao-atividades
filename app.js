@@ -1367,7 +1367,7 @@ function prioPill(t, editable) {
   return `<button class="pill sm ${editable ? 'editable' : ''}" ${editable ? 'data-act="prio" data-pop-anchor' : 'tabindex="-1"'} style="background:${p.color}">${p.label}</button>`;
 }
 function dueChip(t, editable) {
-  if (approvalOf(t) === 'pendente') return `<span class="due pend" title="Aguardando aprovação${t.suggested_due_date ? ' · data acordada: ' + fmtDate(t.suggested_due_date, true) : ''}">${ic('clock')}<span>Em aprovação</span></span>`;
+  if (approvalOf(t) === 'pendente') return `<span class="due pend" title="Aguardando aprovação${t.suggested_due_date ? ' · data de entrega: ' + fmtDate(t.suggested_due_date, true) : ''}">${ic('clock')}<span>Em aprovação</span></span>`;
   if (approvalOf(t) === 'recusada') return `<span class="due late">${ic('x')}Recusada</span>`;
   const st = dueState(t);
   return `<span class="due ${st}" ${editable ? 'data-act="due" data-pop-anchor style="cursor:pointer"' : ''} title="${t.due_date ? fmtDate(t.due_date, true) : ''}">${ic('calendar')}<span>${esc(dueText(t))}</span></span>`;
@@ -2603,7 +2603,7 @@ async function openTask(id, defaults = {}) {
 
   let note = '';
   if (isRequest) {
-    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Escreva o que precisa ser feito, o que foi conversado na reunião e a data acordada. O gestor aprova e define o prazo e a prioridade.</div></div>`;
+    note = `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Vai para aprovação</b>Escreva o que precisa ser feito, o que foi conversado na reunião e a data de entrega da atividade. O gestor aprova e define o prazo e a prioridade.</div></div>`;
   } else if (!isNew && approval === 'pendente') {
     note = adm
       ? `<div class="alert warn" style="margin-bottom:14px">${ic('clock')}<div><b>Solicitação de ${esc(requester?.name || t.requested_by_email || '')}</b>Enviada ${relTime(t.created_at)}${t.suggested_due_date ? ` · prazo combinado: <b>${fmtDate(t.suggested_due_date, true)}</b>` : ''}${t.started_early ? ' · <b>já iniciada</b>' : ''}. Defina a <b>data de entrega</b> e a <b>prioridade</b> e clique em Aprovar.</div></div>`
@@ -2640,7 +2640,7 @@ async function openTask(id, defaults = {}) {
         <label>Progresso<small>Quanto já está pronto</small></label><div id="prog-cell"></div>`}
         ${isRequest ? '' : `<label>Responsável<small>Quem faz o serviço</small></label>
         <select class="select" id="t-who" ${D(canPlan)}><option value="">— Sem responsável —</option>${memberOpts}</select>`}
-        ${isNew && isRequest ? `<label>Data acordada<small>Data combinada na reunião</small></label><input class="input" type="date" id="t-sdue" value="${t.suggested_due_date || ''}" />` : ''}
+        ${isNew && isRequest ? `<label>Data de entrega da atividade<small>Data combinada na reunião</small></label><input class="input" type="date" id="t-sdue" value="${t.suggested_due_date || ''}" />` : ''}
         ${isRequest ? '' : `<label>Data de entrega${canReview ? ' *' : ''}<small>Até quando entregar</small></label>
         <div><input class="input" type="date" id="t-due" value="${t.due_date || (canReview ? t.suggested_due_date || '' : '')}" ${D(canPlan)} />
           ${t.suggested_due_date && !isNew ? `<div class="small muted" style="margin-top:4px">Prazo combinado/sugerido: <b>${fmtDate(t.suggested_due_date, true)}</b>${requester ? ` (por ${esc(firstName(requester.name))})` : ''}</div>` : ''}
@@ -2929,7 +2929,7 @@ async function openTask(id, defaults = {}) {
             const base = { project_id: vals.project_id || t.project_id, title: vals.title, description: vals.description, origin: vals.origin,
               type_id: null, stages: null };
             if (isRequest) {
-              if (!$('#t-sdue', el)?.value) { toast('Informe a data acordada na reunião', 'error'); btn.disabled = false; $('#t-sdue', el)?.focus(); return; }
+              if (!$('#t-sdue', el)?.value) { toast('Informe a data de entrega da atividade', 'error'); btn.disabled = false; $('#t-sdue', el)?.focus(); return; }
               await createTask({ ...base, suggested_due_date: $('#t-sdue', el).value });
               toast('Solicitação enviada para aprovação', 'ok');
             } else {
