@@ -1082,3 +1082,16 @@ button.cmt-count:hover { background: var(--primary-soft); border-color: var(--bo
 /* cabeçalho com logos nas anotações */
 .editor .doc-logos { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 6px 0 12px; margin-bottom: 12px; border-bottom: 2px solid #1d4ed8; user-select: none; }
 .editor .doc-logos img { max-width: 42%; object-fit: contain; background: #fff; border-radius: 4px; }
+/* botão "Atualizações" na linha da atividade */
+.upd-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface, #fff); color: var(--text-2); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.upd-btn svg { width: 13px; height: 13px; }
+.upd-btn .n { background: var(--primary-soft); color: var(--primary); border-radius: 999px; padding: 0 6px; font-size: 11px; font-weight: 600; line-height: 16px; }
+.upd-btn:hover { border-color: var(--primary); color: var(--primary); }
+.task-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* barra de progresso geral no card do projeto */
+.pc-prog { display: flex; align-items: center; gap: 10px; }
+.pc-prog .bar { flex: 1; height: 8px; border-radius: 4px; background: #eceef3; overflow: hidden; }
+.pc-prog .bar i { display: block; height: 100%; border-radius: 4px; }
+.pc-prog b { font-size: 13px; color: var(--text-1, var(--text)); min-width: 36px; text-align: right; }
+html[data-theme="dark"] .pc-prog .bar { background: #3a3d60; }
+html[data-theme="dark"] .upd-btn { background: transparent; }

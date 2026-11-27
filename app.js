@@ -1179,9 +1179,22 @@ async function logout() {
   await sb.auth.signOut();
 }
 
+// Prazos e decisões continuam na lista do sino, mas a bolinha some depois que a pessoa abre o sino
+const BELL_SEEN_KEY = 'ga-seen-bell';
+const bellKeys = (late, soon, decs) => [
+  ...late.map((t) => `late:${t.id}:${t.due_date}`), ...soon.map((t) => `soon:${t.id}:${t.due_date}`),
+  ...decs.map((d) => `dec:${d.t.id}:${d.kind}:${d.since}`)];
+function seenBell() { try { return JSON.parse(localStorage.getItem(BELL_SEEN_KEY) || '{}'); } catch { return {}; } }
+function markBellSeen(keys) {
+  const seen = seenBell(), limit = Date.now() - 60 * 86400000;
+  for (const k of Object.keys(seen)) if (seen[k] < limit) delete seen[k];
+  keys.forEach((k) => (seen[k] = Date.now()));
+  try { localStorage.setItem(BELL_SEEN_KEY, JSON.stringify(seen)); } catch {}
+}
 function updateChrome() {
   const { late, soon } = alertsFor(myTasks());
-  const n = late.length + soon.length + myDecisions().length + finishedForMe().length + newForMe().length + feedForMe().length;
+  const seenB = seenBell();
+  const n = bellKeys(late, soon, myDecisions()).filter((k) => !seenB[k]).length + finishedForMe().length + newForMe().length + feedForMe().length;
   const badge = $('#bell-badge');
   if (badge) { badge.hidden = n === 0; badge.textContent = n > 99 ? '99+' : n; }
   for (const id of ['#nav-count', '#bn-count']) {
@@ -1254,7 +1267,8 @@ function openBell(anchor) {
   if (fin.length) markDoneSeen(fin.map((t) => t.id));
   if (nov.length) markNewSeen(nov.map((t) => t.id));
   if (feed.length) markFeedSeen(feed.map((x) => x.key));
-  if (fin.length || nov.length || feed.length) setTimeout(updateChrome, 0);
+  markBellSeen(bellKeys(late, soon, reqs));
+  setTimeout(updateChrome, 0);
   openPopover(anchor, html, (el) => {
     $$('[data-task]', el).forEach((n) => (n.onclick = () => { closePopover(); openTask(n.dataset.task); }));
     const b = $('#enable-notif', el);
@@ -1401,11 +1415,10 @@ function updateLine(t) {
     dueReq ? `<span class="dec-badge">📅 Novo prazo pedido</span>` : '',
   ].join('');
   const staleTxt = stale ? (lu ? `sem atualização há ${days <= 1 ? '1 dia' : days + ' dias'}` : 'sem atualização') : '';
-  if (!lu && !badges && !staleTxt) return '';
-  return `<div class="task-upd-wrap">
-    ${lu ? `<div class="task-upd" data-act="open" title="${esc(lu.body)}"><span><b>${esc(firstName(who))}</b> <span class="muted">${relTime(lu.created_at)}:</span> ${esc(updPreview(lu.body))}</span></div>` : ''}
-    ${badges || staleTxt ? `<div class="task-badges">${badges}${staleTxt ? `<span class="upd-stale">${staleTxt}</span>` : ''}</div>` : ''}
-  </div>`;
+  const cc = S.commentCounts[t.id] || 0;
+  const btn = cc ? `<button type="button" class="upd-btn" data-act="comments" data-pop-anchor title="${lu ? `Última: ${esc(firstName(who))}, ${relTime(lu.created_at)}` : 'Ver atualizações'}">${ic('msg')}Atualizações<span class="n">${cc}</span></button>` : '';
+  if (!btn && !badges && !staleTxt) return '';
+  return `<div class="task-upd-wrap"><div class="task-badges">${btn}${badges}${staleTxt ? `<span class="upd-stale">${staleTxt}</span>` : ''}</div></div>`;
 }
 
 function taskRow(t, { color, showProject }) {
@@ -1422,7 +1435,6 @@ function taskRow(t, { color, showProject }) {
         ${updateLine(t)}
       </div>
       ${subChip(t)}
-      ${cc ? `<button type="button" class="cmt-count" data-act="comments" data-pop-anchor title="Ver comentários" aria-label="Ver ${cc} comentário(s)">${ic('msg')}${cc}</button>` : ''}
       ${canEditTask(t) && isApproved(t) && t.status !== 'concluido' ? `<button class="upd-mini" data-act="update" title="Escrever atualização do dia" aria-label="Atualização do dia">${ic('plus')}</button>` : ''}
       <span data-act="open" style="display:flex;cursor:pointer">${ic('open', 'open-ic')}</span>
     </div>
@@ -2033,10 +2045,9 @@ function viewHome() {
       <div class="pcard" style="--c:${esc(p.color)}" data-proj="${p.id}">
         <div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1">${esc(p.name)}</h3>${p.archived ? '<span class="archived-tag">Arquivado</span>' : ''}</div>
         ${p.description ? `<p>${esc(p.description)}</p>` : ''}
-        <div class="stackbar">${seg}</div>
+        <div class="pc-prog" title="${avg}% concluído"><div class="bar"><i style="width:${avg}%;background:${avg >= 100 ? 'var(--ok)' : 'var(--primary)'}"></i></div><b>${avg}%</b></div>
         <div class="meta">
           <span>${total} ${total === 1 ? 'atividade' : 'atividades'}</span>
-          <span>${avg}% concluído</span>
           ${pl ? `<span class="late">${pl} atrasada${pl > 1 ? 's' : ''}</span>` : ''}
           ${ps ? `<span class="soon">${ps} vencendo</span>` : ''}
           ${pendN && isAdmin() ? `<span class="soon">${pendN} para aprovar</span>` : ''}
