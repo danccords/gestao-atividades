@@ -232,13 +232,16 @@ export function buildNotePdf({ company = '', author = '', date = '', title = '',
   const meta = toAnsi([author, date].filter(Boolean).join('  ·  '));
   if (logos && (logos.left || logos.right)) {
     // logos: esquerda e direita, mesma altura
-    const LH = 46;
+    // mesma área visual para as duas logos: a mais larga fica mais baixa
+    const AREA = 3600, dims = {};
+    for (const side of ['left', 'right']) { const lg = logos[side]; if (lg) { const h = Math.sqrt(AREA / (lg.w / lg.h)); dims[side] = { w: h * lg.w / lg.h, h }; } }
+    const LH = Math.max(...Object.values(dims).map((d) => d.h));
     for (const side of ['left', 'right']) {
       const lg = logos[side];
       if (!lg) continue;
       const e = { ...lg, path: '__logo_' + side, name: `Im${imgList.length + 1}` };
       imgList.push(e);
-      let w = (lg.w / lg.h) * LH, h = LH;
+      let { w, h } = dims[side];
       if (w > maxW * 0.42) { w = maxW * 0.42; h = (lg.h / lg.w) * w; }
       const lx = side === 'left' ? ML : PW - MR - w;
       ops.push(`q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${lx.toFixed(2)} ${(y - LH + (LH - h) / 2).toFixed(2)} cm /${e.name} Do Q`);

@@ -1081,5 +1081,4 @@ button.cmt-count:hover { background: var(--primary-soft); border-color: var(--bo
 .editor figcaption:empty::before { content: "Toque para escrever uma legenda"; color: var(--text-3); font-style: italic; }
 /* cabeçalho com logos nas anotações */
 .editor .doc-logos { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 6px 0 12px; margin-bottom: 12px; border-bottom: 2px solid #1d4ed8; user-select: none; }
-.editor .doc-logos img { height: 56px; max-width: 42%; object-fit: contain; background: #fff; border-radius: 4px; }
-@media (max-width: 860px) { .editor .doc-logos img { height: 40px; } }
+.editor .doc-logos img { max-width: 42%; object-fit: contain; background: #fff; border-radius: 4px; }

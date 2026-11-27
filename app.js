@@ -3235,7 +3235,9 @@ function onDrag(el, onMove, onEnd, guard) {
 function prepareDocLogos(ed) {
   for (const d of ed.querySelectorAll('.doc-logos')) {
     d.contentEditable = 'false';
-    d.innerHTML = ['left', 'right'].map((side) => { const L = DOC_LOGOS[d.dataset[side]]; return L ? `<img class="dl-${side}" src="${L.src}" alt="${esc(L.name)}" />` : '<span></span>'; }).join('');
+    d.innerHTML = ['left', 'right'].map((side) => { const L = DOC_LOGOS[d.dataset[side]]; if (!L) return '<span></span>';
+      const area = matchMedia('(max-width: 860px)').matches ? 4200 : 8000;
+      return `<img class="dl-${side}" src="${L.src}" alt="${esc(L.name)}" style="height:${logoHeight(L.ar, area).toFixed(1)}px" />`; }).join('');
   }
 }
 async function preparePhotoGrids(ed, onChange) {
@@ -3417,9 +3419,11 @@ async function removeNotePhotos(noteId) {
 const ALLOWED_TAGS = new Set(['P', 'BR', 'H1', 'H2', 'H3', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'A', 'DIV', 'SPAN', 'FIGURE', 'FIGCAPTION', 'IMG']);
 // Logos disponíveis para o cabeçalho das anotações (arquivos em /logos)
 const DOC_LOGOS = {
-  allos: { src: 'logos/allos.jpg', name: 'ALLOS Engenharia e Projetos' },
-  genica: { src: 'logos/genica.jpg', name: 'Gênica' },
+  allos: { src: 'logos/allos.jpg', name: 'ALLOS Engenharia e Projetos', ar: 668 / 354 },
+  genica: { src: 'logos/genica.jpg', name: 'Gênica', ar: 515 / 112 },
 };
+// Mesma área visual para todas as logos (uma logo larga fica mais baixa), em px
+const logoHeight = (ar, area) => Math.sqrt(area / ar);
 const PHOTO_PATH_RE = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[\w-]+\.jpg$/;
 function sanitize(html) {
   const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
