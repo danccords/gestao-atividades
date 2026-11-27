@@ -3232,7 +3232,14 @@ function onDrag(el, onMove, onEnd, guard) {
     window.addEventListener('pointercancel', up);
   });
 }
+function prepareDocLogos(ed) {
+  for (const d of ed.querySelectorAll('.doc-logos')) {
+    d.contentEditable = 'false';
+    d.innerHTML = ['left', 'right'].map((side) => { const L = DOC_LOGOS[d.dataset[side]]; return L ? `<img class="dl-${side}" src="${L.src}" alt="${esc(L.name)}" />` : '<span></span>'; }).join('');
+  }
+}
 async function preparePhotoGrids(ed, onChange) {
+  prepareDocLogos(ed);
   const grids = [...ed.querySelectorAll('.photo-grid')];
   for (const g of grids) {
     if (!g.querySelector('figure.photo')) { g.remove(); continue; }
@@ -3392,6 +3399,7 @@ function markCols(g) { g.querySelectorAll('.pg-tools [data-cols]').forEach((b) =
 function serializeEditor(ed) {
   const c = ed.cloneNode(true);
   c.querySelectorAll('.ph-ui, .photo.uploading').forEach((x) => x.remove());
+  c.querySelectorAll('.doc-logos').forEach((x) => { x.innerHTML = ''; });
   c.querySelectorAll('[contenteditable]').forEach((x) => x.removeAttribute('contenteditable'));
   c.querySelectorAll('[data-bound]').forEach((x) => x.removeAttribute('data-bound'));
   c.querySelectorAll('figure.photo img').forEach((x) => { x.removeAttribute('src'); x.removeAttribute('style'); x.removeAttribute('draggable'); });
@@ -3407,6 +3415,11 @@ async function removeNotePhotos(noteId) {
 }
 
 const ALLOWED_TAGS = new Set(['P', 'BR', 'H1', 'H2', 'H3', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'A', 'DIV', 'SPAN', 'FIGURE', 'FIGCAPTION', 'IMG']);
+// Logos disponíveis para o cabeçalho das anotações (arquivos em /logos)
+const DOC_LOGOS = {
+  allos: { src: 'logos/allos.jpg', name: 'ALLOS Engenharia e Projetos' },
+  genica: { src: 'logos/genica.jpg', name: 'Gênica' },
+};
 const PHOTO_PATH_RE = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[\w-]+\.jpg$/;
 function sanitize(html) {
   const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
@@ -3426,7 +3439,8 @@ function sanitize(html) {
           const keep = (child.tagName === 'A' && a.name === 'href' && /^(https?:|mailto:)/i.test(a.value))
             || (child.tagName === 'UL' && a.name === 'class' && a.value === 'checklist')
             || (child.tagName === 'LI' && a.name === 'data-checked')
-            || (child.tagName === 'DIV' && a.name === 'class' && ['photo-grid', 'ph-frame'].includes(a.value))
+            || (child.tagName === 'DIV' && a.name === 'class' && ['photo-grid', 'ph-frame', 'doc-logos'].includes(a.value))
+            || (child.tagName === 'DIV' && ['data-left', 'data-right'].includes(a.name) && Object.hasOwn(DOC_LOGOS, a.value))
             || (child.tagName === 'DIV' && a.name === 'data-cols' && /^[123]$/.test(a.value))
             || (child.tagName === 'FIGURE' && ((a.name === 'class' && a.value === 'photo') || a.name === 'data-path' || (a.name === 'data-fit' && /^(cover|contain)$/.test(a.value))
                 || (['data-w', 'data-ar', 'data-px', 'data-py'].includes(a.name) && /^\d{1,3}(\.\d{1,3})?$/.test(a.value))));
@@ -3475,6 +3489,20 @@ const NOTE_TEMPLATES = [
 <h2>Medições / dados coletados</h2><ul><li></li></ul>
 <h2>Fotos e anexos</h2><p>Indique onde estão salvos (pasta, link).</p>
 <h2>Pendências</h2>${CK(['Pendência — Responsável — Prazo'])}` },
+  { key: 'visita_genica', icon: '📋', name: 'Relatório de visita técnica — ALLOS + Gênica', desc: 'Com as logos da ALLOS e da Gênica no topo e no PDF',
+    title: () => `Relatório de visita técnica — ${todayBR()}`,
+    html: () => `<div class="doc-logos" data-left="allos" data-right="genica"></div>
+<p><b>Cliente:</b> Gênica &nbsp; <b>Unidade / local:</b> </p>
+<p><b>Data da visita:</b> ${todayBR()} &nbsp; <b>Horário:</b> </p>
+<p><b>Responsável técnico (ALLOS):</b> ${esc(S.me?.name || '')}</p>
+<p><b>Acompanhado por (Gênica):</b> </p>
+<h2>Objetivo da visita</h2><p></p>
+<h2>Descrição da visita</h2><p></p>
+<h2>Constatações</h2>${CK(['O que foi verificado — situação encontrada'])}
+<h2>Registro fotográfico</h2><p>Toque em <b>Foto</b> na barra acima para adicionar as fotos. Elas ficam em quadros, várias por página.</p>
+<h2>Recomendações</h2><ul><li></li></ul>
+<h2>Próximos passos</h2>${CK(['O que fazer — Responsável — Prazo'])}
+<h2>Conclusão</h2><p></p>` },
   { key: 'fornecedor', icon: '🏭', name: 'Relatório de visita ao fornecedor', desc: 'Inspeção de fabricação: dados, não conformidades, fotos e pendências',
     title: () => `Relatório de visita — ${todayBR()}`,
     html: () => `<p><b>Fornecedor:</b> &nbsp; <b>Local:</b> </p>
@@ -3535,7 +3563,23 @@ async function exportNotePdf(note, html) {
         bmp.close?.();
       } catch (e) { console.warn('foto', path, e); }
     }
+    // logos do cabeçalho (se a página usar um modelo com logos)
+    let logos = null;
+    const dl = new DOMParser().parseFromString(html, 'text/html').querySelector('.doc-logos');
+    if (dl) {
+      logos = {};
+      for (const side of ['left', 'right']) {
+        const L = DOC_LOGOS[dl.dataset[side]];
+        if (!L) continue;
+        try {
+          const blob = await (await fetch(L.src)).blob();
+          const bmp = await createImageBitmap(blob);
+          logos[side] = { bytes: new Uint8Array(await blob.arrayBuffer()), w: bmp.width, h: bmp.height };
+        } catch (e) { console.warn('logo', e); }
+      }
+    }
     const bytes = buildNotePdf({
+      logos,
       company: COMPANY_NAME, author: S.me?.name || '', date: new Date().toLocaleDateString('pt-BR'),
       title, html: sanitize(html), footer: `Gerado pelo ${APP_NAME}`, images,
     });

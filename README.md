@@ -194,3 +194,7 @@ Mudou a %, o status acompanha; escolheu um status, a % vai para a faixa dele. Co
 - O PDF coloca as fotos nos mesmos quadros, várias por página.
 - Modelo novo: **Relatório de visita ao fornecedor**.
 - O backup das anotações guarda os textos; as fotos ficam no Storage.
+
+### Modelo "Relatório de visita técnica — ALLOS + Gênica"
+Em Anotações → Nova página há um modelo com as logos da ALLOS (esquerda) e da Gênica (direita) no topo.
+As logos aparecem na tela e no cabeçalho do PDF. Os arquivos ficam em `logos/` (para trocar uma logo, substitua o JPG mantendo o nome).

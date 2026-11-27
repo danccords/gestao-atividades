@@ -36,7 +36,7 @@ function textW(s, f, size) { let w = 0; for (let i = 0; i < s.length; i++) w += 
 const esc = (s) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)').replace(/\r/g, '');
 const hex = (h) => { const n = parseInt(h.replace('#', ''), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map((x) => x.toFixed(3)).join(' '); };
 
-export function buildNotePdf({ company = '', author = '', date = '', title = '', html = '', footer = '', images = {} }) {
+export function buildNotePdf({ company = '', author = '', date = '', title = '', html = '', footer = '', images = {}, logos = null }) {
   const imgList = [];   // fotos usadas: {name, bytes, w, h}
   const imgName = (path) => { const im = images[path]; if (!im) return null; let e = imgList.find((x) => x.path === path); if (!e) { e = { ...im, path, name: `Im${imgList.length + 1}` }; imgList.push(e); } return e; };
   const PW = 595.28, PH = 841.89, ML = 56, MR = 56, MT = 56, MB = 64;
@@ -158,6 +158,7 @@ export function buildNotePdf({ company = '', author = '', date = '', title = '',
       y -= 6;
       return;
     }
+    if (tag === 'DIV' && el.classList.contains('doc-logos')) return;   // logos vão no cabeçalho
     if (tag === 'DIV' && el.classList.contains('photo-grid')) {
       // mesmo layout da tela: cada foto tem largura (% da linha) e proporção próprias; quebra de linha automática
       const figs = [...el.querySelectorAll('figure.photo')];
@@ -228,10 +229,28 @@ export function buildNotePdf({ company = '', author = '', date = '', title = '',
 
   // ---- cabeçalho ----
   newPage();
-  text(ML, y - 12, toAnsi(company), 'B', 12, '#1d4ed8');
   const meta = toAnsi([author, date].filter(Boolean).join('  ·  '));
-  text(PW - MR - textW(meta, 'R', 9), y - 11, meta, 'R', 9, '#6b7280');
-  y -= 22; line(ML, y, PW - MR, y, '#1d4ed8', 1.6); y -= 14;
+  if (logos && (logos.left || logos.right)) {
+    // logos: esquerda e direita, mesma altura
+    const LH = 46;
+    for (const side of ['left', 'right']) {
+      const lg = logos[side];
+      if (!lg) continue;
+      const e = { ...lg, path: '__logo_' + side, name: `Im${imgList.length + 1}` };
+      imgList.push(e);
+      let w = (lg.w / lg.h) * LH, h = LH;
+      if (w > maxW * 0.42) { w = maxW * 0.42; h = (lg.h / lg.w) * w; }
+      const lx = side === 'left' ? ML : PW - MR - w;
+      ops.push(`q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${lx.toFixed(2)} ${(y - LH + (LH - h) / 2).toFixed(2)} cm /${e.name} Do Q`);
+    }
+    y -= LH + 8; line(ML, y, PW - MR, y, '#1d4ed8', 1.6);
+    text(PW - MR - textW(meta, 'R', 8.5), y - 11, meta, 'R', 8.5, '#6b7280');
+    y -= 22;
+  } else {
+    text(ML, y - 12, toAnsi(company), 'B', 12, '#1d4ed8');
+    text(PW - MR - textW(meta, 'R', 9), y - 11, meta, 'R', 9, '#6b7280');
+    y -= 22; line(ML, y, PW - MR, y, '#1d4ed8', 1.6); y -= 14;
+  }
   drawLines(wrap([{ text: title || 'Sem título', f: 'B', color: '#111827' }], maxW, 18), ML, 18, 23);
   y -= 8;
 
